@@ -1,0 +1,23 @@
+# OS
+.DS_Store
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Dependencies / build output — extend per-subproject once a stack is chosen
+node_modules/
+dist/
+build/
+.venv/
+__pycache__/
+target/
+vendor/
+
+# Logs
+*.log
+
+# Editor
+.vscode/
+.idea/
