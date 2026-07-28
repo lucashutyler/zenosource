@@ -1,0 +1,399 @@
+// Implements the canonical entities in ../../docs/data-model.md.
+// Tenant / InternalUser / SupplierContact are the auth/tenancy substrate that
+// doc doesn't cover at field level (it's scoped to the procurement domain).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- Tenancy & users ---
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  internalUsers  InternalUser[]
+  suppliers      Supplier[]
+  priceLists     PriceList[]
+  purchaseOrders PurchaseOrder[]
+  rfqs           RFQ[]
+  poSuggestions  POSuggestion[]
+  actionItems    ActionItem[]
+}
+
+enum InternalUserRole {
+  OWNER
+  MEMBER
+}
+
+model InternalUser {
+  id           String           @id @default(cuid())
+  tenantId     String
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  email        String
+  passwordHash String
+  name         String
+  role         InternalUserRole @default(MEMBER)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  cancelledPurchaseOrders PurchaseOrder[] @relation("POCancelledBy")
+  actionItems             ActionItem[]    @relation("ActionItemInternalOwner")
+
+  @@unique([tenantId, email])
+}
+
+model SupplierContact {
+  id           String   @id @default(cuid())
+  supplierId   String
+  supplier     Supplier @relation(fields: [supplierId], references: [id])
+  name         String
+  email        String
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  actionItems ActionItem[] @relation("ActionItemExternalOwner")
+
+  @@unique([supplierId, email])
+}
+
+// --- Procurement domain ---
+
+enum SupplierStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Supplier {
+  id                  String         @id @default(cuid())
+  tenantId            String
+  tenant              Tenant         @relation(fields: [tenantId], references: [id])
+  name                String
+  sourceIntegrationId String?
+  externalRef         String?
+  primaryContactName  String?
+  primaryContactEmail String?
+  status              SupplierStatus @default(ACTIVE)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  contacts       SupplierContact[]
+  priceLists     PriceList[]
+  purchaseOrders PurchaseOrder[]
+  rfqInvites     RFQSupplierInvite[]
+  rfqQuotes      RFQQuote[]
+  poSuggestions  POSuggestion[]
+
+  @@index([tenantId])
+}
+
+model PriceList {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  tenant              Tenant    @relation(fields: [tenantId], references: [id])
+  supplierId          String
+  supplier            Supplier  @relation(fields: [supplierId], references: [id])
+  sourceIntegrationId String?
+  externalRef         String?
+  effectiveFrom       DateTime?
+  effectiveTo         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  items PriceListItem[]
+
+  @@index([tenantId])
+  @@index([supplierId])
+}
+
+model PriceListItem {
+  id          String    @id @default(cuid())
+  priceListId String
+  priceList   PriceList @relation(fields: [priceListId], references: [id])
+  itemNumber  String
+  description String
+  uom         String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  priceBreaks PriceBreak[]
+
+  @@index([priceListId])
+}
+
+model PriceBreak {
+  id              String        @id @default(cuid())
+  priceListItemId String
+  priceListItem   PriceListItem @relation(fields: [priceListItemId], references: [id])
+  minQuantity     Int
+  unitPrice       Decimal       @db.Decimal(14, 4)
+  currency        String        @default("USD")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([priceListItemId])
+}
+
+// draft -> issued -> acknowledged -> in_progress -> fulfilled -> closed,
+// with rejected (supplier) and cancelled (buyer) as explicit exits —
+// see docs/data-model.md#purchaseorder.
+enum PurchaseOrderStatus {
+  DRAFT
+  ISSUED
+  ACKNOWLEDGED
+  REJECTED
+  IN_PROGRESS
+  FULFILLED
+  CLOSED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id                  String              @id @default(cuid())
+  tenantId            String
+  tenant              Tenant              @relation(fields: [tenantId], references: [id])
+  sourceIntegrationId String?
+  externalRef         String?
+  supplierId          String
+  supplier            Supplier            @relation(fields: [supplierId], references: [id])
+  status              PurchaseOrderStatus @default(DRAFT)
+
+  cancelledAt        DateTime?
+  cancelledByUserId  String?
+  cancelledByUser    InternalUser? @relation("POCancelledBy", fields: [cancelledByUserId], references: [id])
+  cancellationReason String?
+
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines PurchaseOrderLine[]
+
+  @@index([tenantId])
+  @@index([supplierId])
+}
+
+enum PurchaseOrderLineStatus {
+  PENDING_ACKNOWLEDGMENT
+  ACKNOWLEDGED
+  CHANGE_PROPOSED
+  FULFILLED
+  CLOSED
+  CANCELLED
+}
+
+model PurchaseOrderLine {
+  id              String                  @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder           @relation(fields: [purchaseOrderId], references: [id])
+  lineNumber      Int
+  itemNumber      String
+  description     String
+  uom             String
+  quantity        Decimal                 @db.Decimal(14, 4)
+  unitPrice       Decimal                 @db.Decimal(14, 4)
+  needByDate      DateTime?
+  promiseDate     DateTime?
+  status          PurchaseOrderLineStatus @default(PENDING_ACKNOWLEDGMENT)
+
+  proposedQuantity          Decimal?  @db.Decimal(14, 4)
+  proposedUnitPrice         Decimal?  @db.Decimal(14, 4)
+  proposedDate              DateTime?
+  proposedBySupplierContact String?
+  proposedAt                DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([purchaseOrderId])
+}
+
+enum RFQStatus {
+  DRAFT
+  SENT
+  RESPONSES_OPEN
+  AWARDED
+  CLOSED
+}
+
+model RFQ {
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  status    RFQStatus @default(DRAFT)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  lines   RFQLine[]
+  invites RFQSupplierInvite[]
+  quotes  RFQQuote[]
+
+  @@index([tenantId])
+}
+
+model RFQLine {
+  id          String    @id @default(cuid())
+  rfqId       String
+  rfq         RFQ       @relation(fields: [rfqId], references: [id])
+  itemNumber  String
+  description String
+  uom         String
+  quantity    Decimal   @db.Decimal(14, 4)
+  needByDate  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  quoteLines RFQQuoteLine[]
+
+  @@index([rfqId])
+}
+
+enum RFQSupplierInviteStatus {
+  INVITED
+  RESPONDED
+  DECLINED
+}
+
+model RFQSupplierInvite {
+  id         String                  @id @default(cuid())
+  rfqId      String
+  rfq        RFQ                     @relation(fields: [rfqId], references: [id])
+  supplierId String
+  supplier   Supplier                @relation(fields: [supplierId], references: [id])
+  status     RFQSupplierInviteStatus @default(INVITED)
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  @@unique([rfqId, supplierId])
+}
+
+enum RFQQuoteStatus {
+  PENDING
+  SUBMITTED
+  WITHDRAWN
+}
+
+model RFQQuote {
+  id          String         @id @default(cuid())
+  rfqId       String
+  rfq         RFQ            @relation(fields: [rfqId], references: [id])
+  supplierId  String
+  supplier    Supplier       @relation(fields: [supplierId], references: [id])
+  status      RFQQuoteStatus @default(PENDING)
+  submittedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  lines RFQQuoteLine[]
+
+  @@unique([rfqId, supplierId])
+}
+
+model RFQQuoteLine {
+  id           String   @id @default(cuid())
+  rfqQuoteId   String
+  rfqQuote     RFQQuote @relation(fields: [rfqQuoteId], references: [id])
+  rfqLineId    String
+  rfqLine      RFQLine  @relation(fields: [rfqLineId], references: [id])
+  unitPrice    Decimal  @db.Decimal(14, 4)
+  leadTimeDays Int
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([rfqQuoteId, rfqLineId])
+}
+
+enum POSuggestionStatus {
+  OPEN
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+}
+
+model POSuggestion {
+  id                  String             @id @default(cuid())
+  tenantId            String
+  tenant              Tenant             @relation(fields: [tenantId], references: [id])
+  sourceIntegrationId String
+  externalRef         String
+  supplierId          String
+  supplier            Supplier           @relation(fields: [supplierId], references: [id])
+  itemNumber          String
+  description         String
+  suggestedQuantity   Decimal            @db.Decimal(14, 4)
+  suggestedDate       DateTime
+  suggestedUnitPrice  Decimal?           @db.Decimal(14, 4)
+  status              POSuggestionStatus @default(OPEN)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([tenantId])
+}
+
+enum ActionItemSubjectType {
+  PURCHASE_ORDER
+  PURCHASE_ORDER_LINE
+  RFQ
+  PO_SUGGESTION
+}
+
+// Illustrative, not exhaustive — see docs/data-model.md#actionitem.
+enum ActionItemType {
+  PO_ACKNOWLEDGE
+  PO_REVIEW_CHANGE_PROPOSAL
+  PO_REVIEW_REJECTION
+  RFQ_SUBMIT_QUOTE
+  RFQ_AWARD_DECISION
+  PO_SUGGESTION_REVIEW
+}
+
+enum ActionItemOwnerType {
+  INTERNAL_USER
+  EXTERNAL_USER
+}
+
+enum ActionItemStatus {
+  OPEN
+  RESOLVED
+  SUPERSEDED
+}
+
+model ActionItem {
+  id          String                @id @default(cuid())
+  tenantId    String
+  tenant      Tenant                @relation(fields: [tenantId], references: [id])
+  subjectType ActionItemSubjectType
+  subjectId   String
+  actionType  ActionItemType
+  ownerType   ActionItemOwnerType
+
+  internalOwnerId String?
+  internalOwner   InternalUser?    @relation("ActionItemInternalOwner", fields: [internalOwnerId], references: [id])
+  externalOwnerId String?
+  externalOwner   SupplierContact? @relation("ActionItemExternalOwner", fields: [externalOwnerId], references: [id])
+
+  status ActionItemStatus @default(OPEN)
+
+  // Bearer token for the no-login "action view" link (docs/architecture.md
+  // #action-items--reminders). Scoped to this one action item; valid for as
+  // long as status stays OPEN — not single-use, not separately time-limited.
+  accessToken String @unique
+
+  openedAt   DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([tenantId])
+  @@index([internalOwnerId])
+  @@index([externalOwnerId])
+}

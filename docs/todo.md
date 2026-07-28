@@ -12,18 +12,20 @@ Phased build plan. Nothing here is scaffolded yet — this is the plan, not a st
 
 ## Phase 1 — Core platform MVP (`apps/platform`)
 
-- [ ] Placeholder internal-user auth (before Okta is wired in)
-- [ ] Tenant model + role/permission model for internal users
-- [ ] PO: create/view, fixed lifecycle state machine
-- [ ] RFQ: create/send/collect responses/award
-- [ ] Price Lists with quantity price breaks
-- [ ] Supplier record + external-user invite flow
-- [ ] Integration/capability registry (build this before real integrations exist — feature availability should be driven by it from day one, not retrofitted)
-- [ ] Action item model: every state-bearing entity resolves to an open action + explicit owner (internal or external user)
-- [ ] Daily reminder job for open action items (email, v1) for both internal and external users
-- [ ] Dashboard: surface open action items immediately on sign-in, with a count/badge indicator (internal and external users)
-- [ ] Scoped, no-login action-view flow for external users via an emailed link — grant tied to the action item's lifecycle (reopenable, not single-use); inbound reply-to-email parsing deferred to a later phase
-- [ ] Reporting: buyer scorecard and supplier scorecard surfaces, built on action-item/state-transition history
+Runnable foundation is in place — see [apps/platform/CLAUDE.md](../apps/platform/CLAUDE.md) for the stack (Next.js 16 + Prisma 7 + Postgres) and local dev setup. `npm run seed` gives you a working login and a live example of the no-login external link, no Epicor/Okta required. What's below is genuinely done vs. still open.
+
+- [x] Placeholder internal-user auth — email/password, signed session cookie, DAL-enforced (`src/lib/dal.ts`)
+- [~] Tenant model + role/permission model — `Tenant`/`InternalUser.role` exist in the schema; role isn't actually enforced anywhere yet (no permission checks gate any action) — schema ahead of logic
+- [ ] PO: create/view, fixed lifecycle state machine — schema and status enum exist (incl. `REJECTED`/`CANCELLED`); no UI or mutation actions yet, only reachable via the seed script
+- [ ] RFQ: create/send/collect responses/award — schema only, no UI/logic
+- [ ] Price Lists with quantity price breaks — schema only, no UI/logic
+- [~] Supplier record + external-user invite flow — `Supplier`/`SupplierContact` schema exists and is seeded; no actual invite flow (no way to add a new supplier contact through the app)
+- [ ] Integration/capability registry — **not built.** The concept is designed in [docs/architecture.md](architecture.md#extensibility--capability-model) but there's no code for it yet; this is the biggest structural gap before Epicor/Okta work in Phase 2/3 can hook in cleanly
+- [x] Action item model — `ActionItem` schema + create/resolve/list/count helpers (`src/lib/action-items.ts`)
+- [ ] Daily reminder job — not built (no scheduler, no email sending)
+- [x] Dashboard: open action items on sign-in with a count badge — `src/app/dashboard/`
+- [x] Scoped, no-login action-view flow — `src/app/a/[token]/`, tested end-to-end (grant persists across reload, dies once resolved)
+- [ ] Reporting: buyer scorecard and supplier scorecard surfaces — not built
 
 ## Phase 2 — Epicor integration (`integrations/erp/epicor`)
 
