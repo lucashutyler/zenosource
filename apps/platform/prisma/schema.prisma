@@ -26,6 +26,7 @@ model Tenant {
   rfqs           RFQ[]
   poSuggestions  POSuggestion[]
   actionItems    ActionItem[]
+  locations      Location[]
 }
 
 enum InternalUserRole {
@@ -44,10 +45,56 @@ model InternalUser {
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
-  cancelledPurchaseOrders PurchaseOrder[] @relation("POCancelledBy")
-  actionItems             ActionItem[]    @relation("ActionItemInternalOwner")
+  cancelledPurchaseOrders PurchaseOrder[]        @relation("POCancelledBy")
+  actionItems             ActionItem[]           @relation("ActionItemInternalOwner")
+  locations               InternalUserLocation[]
 
   @@unique([tenantId, email])
+}
+
+// Comparable to (simpler than) Epicor's Company -> Site structure: Tenant
+// plays Company, Location plays Site — no separate Company layer. See
+// docs/data-model.md#location.
+enum LocationStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Location {
+  id                  String         @id @default(cuid())
+  tenantId            String
+  tenant              Tenant         @relation(fields: [tenantId], references: [id])
+  name                String
+  code                String
+  sourceIntegrationId String?
+  externalRef         String?
+  addressLine1        String?
+  addressLine2        String?
+  city                String?
+  region              String?
+  postalCode          String?
+  country             String?
+  status              LocationStatus @default(ACTIVE)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  assignedUsers      InternalUserLocation[]
+  purchaseOrderLines PurchaseOrderLine[]
+  rfqLines           RFQLine[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model InternalUserLocation {
+  id             String       @id @default(cuid())
+  internalUserId String
+  internalUser   InternalUser @relation(fields: [internalUserId], references: [id])
+  locationId     String
+  location       Location     @relation(fields: [locationId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@unique([internalUserId, locationId])
 }
 
 model SupplierContact {
@@ -202,6 +249,10 @@ model PurchaseOrderLine {
   uom             String
   quantity        Decimal                 @db.Decimal(14, 4)
   unitPrice       Decimal                 @db.Decimal(14, 4)
+  // Nullable for migration flexibility; the create-PO flow requires it in
+  // practice — see docs/data-model.md#purchaseorderline.
+  locationId      String?
+  location        Location?               @relation(fields: [locationId], references: [id])
   needByDate      DateTime?
   promiseDate     DateTime?
   status          PurchaseOrderLineStatus @default(PENDING_ACKNOWLEDGMENT)
@@ -234,6 +285,13 @@ model RFQ {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  // Resolves the docs/data-model.md open question of how the winning quote
+  // is recorded: explicit FK, set only on award. Whether award auto-creates
+  // a PurchaseOrder is still open — v1 treats that as a separate buyer
+  // action, not automatic.
+  awardedQuoteId String?   @unique
+  awardedQuote   RFQQuote? @relation("RFQAwardedQuote", fields: [awardedQuoteId], references: [id])
+
   lines   RFQLine[]
   invites RFQSupplierInvite[]
   quotes  RFQQuote[]
@@ -249,6 +307,8 @@ model RFQLine {
   description String
   uom         String
   quantity    Decimal   @db.Decimal(14, 4)
+  locationId  String?
+  location    Location? @relation(fields: [locationId], references: [id])
   needByDate  DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -295,6 +355,8 @@ model RFQQuote {
   updatedAt   DateTime       @updatedAt
 
   lines RFQQuoteLine[]
+
+  awardedFor RFQ? @relation("RFQAwardedQuote")
 
   @@unique([rfqId, supplierId])
 }

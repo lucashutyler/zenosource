@@ -1,45 +1,56 @@
+import Link from "next/link";
+import { ChevronRight } from "lucide-react";
 import { getCurrentInternalUser } from "@/lib/dal";
-import { listOpenActionItemsForInternalUser } from "@/lib/action-items";
-
-const ACTION_LABELS: Record<string, string> = {
-  PO_ACKNOWLEDGE: "Acknowledge purchase order",
-  PO_REVIEW_CHANGE_PROPOSAL: "Review supplier-proposed change",
-  PO_REVIEW_REJECTION: "Review rejected purchase order",
-  RFQ_SUBMIT_QUOTE: "Submit RFQ quote",
-  RFQ_AWARD_DECISION: "Decide RFQ award",
-  PO_SUGGESTION_REVIEW: "Review PO suggestion",
-};
+import { listOpenActionItemsForInternalUser, resolveActionItemHrefs } from "@/lib/action-items";
+import { ACTION_LABELS } from "@/lib/action-labels";
 
 export default async function DashboardPage() {
   const user = await getCurrentInternalUser();
-  const items = user ? await listOpenActionItemsForInternalUser(user.id) : [];
+  const items = await listOpenActionItemsForInternalUser(user.id);
+  const hrefs = await resolveActionItemHrefs(items);
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div>
       <h1 className="mb-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
         Open action items
       </h1>
       <p className="mb-6 text-sm text-zinc-500">
-        Everything below is something only you can move forward.
+        Assigned to you. If a teammate with access handles one first, it drops off this list
+        automatically — nothing here can be actioned twice.
       </p>
 
       {items.length === 0 ? (
         <p className="text-sm text-zinc-500">Nothing open right now.</p>
       ) : (
         <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950">
-          {items.map((item) => (
-            <li key={item.id} className="flex items-center justify-between px-4 py-3">
-              <div>
-                <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
-                  {ACTION_LABELS[item.actionType] ?? item.actionType}
-                </p>
-                <p className="text-xs text-zinc-500">
-                  {item.subjectType.replaceAll("_", " ").toLowerCase()} · opened{" "}
-                  {item.openedAt.toLocaleDateString()}
-                </p>
+          {items.map((item) => {
+            const href = hrefs.get(item.id);
+            const body = (
+              <div className="flex flex-1 items-center justify-between px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
+                    {ACTION_LABELS[item.actionType] ?? item.actionType}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    {item.subjectType.replaceAll("_", " ").toLowerCase()} · opened{" "}
+                    {item.openedAt.toLocaleDateString()}
+                  </p>
+                </div>
+                {href && <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400" />}
               </div>
-            </li>
-          ))}
+            );
+            return (
+              <li key={item.id}>
+                {href ? (
+                  <Link href={href} className="flex hover:bg-zinc-50 dark:hover:bg-zinc-900">
+                    {body}
+                  </Link>
+                ) : (
+                  body
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

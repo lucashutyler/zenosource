@@ -1,0 +1,110 @@
+name: platform CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/platform/**"
+      - ".github/workflows/platform-ci.yml"
+  pull_request:
+    paths:
+      - "apps/platform/**"
+      - ".github/workflows/platform-ci.yml"
+
+defaults:
+  run:
+    working-directory: apps/platform
+
+# .env.test is intentionally gitignored (see apps/platform/.gitignore) —
+# none of these values are real secrets (a throwaway local-only DB password
+# and a dev-only session secret), so each job writes its own copy from
+# values matching the Postgres service container below, rather than
+# committing an .env file as a matter of habit.
+env:
+  TEST_DATABASE_URL: "postgresql://zenosource:zenosource@localhost:5434/zenosource_test?schema=public"
+  TEST_SESSION_SECRET: "ci-test-secret-not-for-production-use"
+
+jobs:
+  typecheck-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/platform/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsc --noEmit
+      - run: npm run lint
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zenosource
+          POSTGRES_PASSWORD: zenosource
+          POSTGRES_DB: zenosource_test
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U zenosource"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/platform/package-lock.json
+      - run: npm ci
+      - name: Write .env.test
+        run: |
+          echo "DATABASE_URL=\"${TEST_DATABASE_URL}\"" > .env.test
+          echo "SESSION_SECRET=\"${TEST_SESSION_SECRET}\"" >> .env.test
+      - run: npx prisma generate
+      - run: npx dotenv -e .env.test -- npx prisma db push
+      - run: npm test
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zenosource
+          POSTGRES_PASSWORD: zenosource
+          POSTGRES_DB: zenosource_test
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U zenosource"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/platform/package-lock.json
+      - run: npm ci
+      - name: Write .env.test
+        run: |
+          echo "DATABASE_URL=\"${TEST_DATABASE_URL}\"" > .env.test
+          echo "SESSION_SECRET=\"${TEST_SESSION_SECRET}\"" >> .env.test
+      - run: npx prisma generate
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/platform/playwright-report/
+          retention-days: 7

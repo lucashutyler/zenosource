@@ -33,9 +33,18 @@ This is deliberately the credentials-only "internal user" placeholder from [docs
 ```bash
 docker compose up -d        # Postgres on localhost:5434 (5432 and 5433 were already taken by other local Postgres instances)
 npm install
-npx prisma migrate dev      # create schema
-npm run seed                 # demo tenant + internal user + one open action item
+npx prisma db push          # sync schema — see the migration-history note below before reaching for `migrate dev` instead
+npm run seed                 # demo tenant, 5 suppliers, ~24 POs, 5 RFQs, 2 price lists, a few open action items
 npm run dev                  # http://localhost:3000
 ```
 
 Seeded login is printed by `npm run seed`.
+
+**Migration-history gap, worth knowing about**: two schema changes (`Location`, `RFQ.awardedQuoteId`) were applied to the dev/test databases via `prisma db push` instead of a real migration, because `prisma migrate dev` refuses to run non-interactively when it needs to confirm a warning — a real constraint in an agent-driven session, not necessarily in a normal terminal. `prisma/migrations/` only has the one `20260728124103_init` migration, so it doesn't fully capture the current schema. That's fine for `db push`-based local/CI setup (see below), but `prisma migrate deploy` — the non-interactive command meant for a real deploy — would miss those two changes. Generate proper migration files for the gap before this goes anywhere near a production database.
+
+## Testing
+
+- **Unit/integration**: Vitest (`npm test`, `npm run test:watch`, `npm run test:ui`). Runs against a dedicated `zenosource_test` database (not the dev one) — see `.env.test` and `vitest.setup.ts`. `src/lib/session.test.ts` mocks `next/headers` to test the real exported functions without a Next.js request context; `src/lib/reminders.test.ts` runs against the real test DB. Its `wipe()` helper has to stay in sync with `prisma/seed.ts`'s deletion order — the test DB is shared with the E2E suite below, so a partial wipe can hit an FK constraint from data the other suite left behind.
+- **End-to-end**: Playwright (`npm run test:e2e`, `npm run test:e2e:ui`). Also runs against `zenosource_test` — `e2e/global-setup.ts` pushes the schema and reseeds before every run, so specs always start from known data. The E2E server runs on port 3100 with its own build directory (`E2E_DIST_DIR=.next-e2e` in `next.config.ts`) specifically so it can run *alongside* a manually-running `npm run dev` without Next's project-directory dev lock killing one of them. `e2e/helpers/db.ts` uses raw `pg` queries rather than the generated Prisma client — Playwright's own TS transform doesn't handle the generated client's `import.meta.url` usage (tsx and Next's bundler both do fine; this is specific to Playwright's pipeline).
+- **CI**: `.github/workflows/platform-ci.yml` runs typecheck/lint, unit tests, and E2E on push/PR, each E2E/unit job with its own Postgres service container — so this class of shared-test-DB interference can't happen in CI even though it's a real local concern.
+- **Add tests with the change that needs them**, not as a follow-up — a race-condition fix without a test proving the race is closed isn't done. When you build a new server action or lifecycle transition, prefer extending the existing integration-test pattern (a real test-DB write, not a mocked Prisma client) over a pure unit test with mocks — this app's server actions are thin enough that mocking them tends to test the mock, not the behavior.

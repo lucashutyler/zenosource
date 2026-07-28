@@ -7,7 +7,7 @@ import { readSession } from "@/lib/session";
 // #optimistic-checks-with-proxy-optional (this file replaces middleware.ts
 // in this Next.js version).
 
-const PUBLIC_PREFIXES = ["/login", "/a/"]; // /a/[token] = external action-view links, no login
+const PUBLIC_PREFIXES = ["/login", "/a/", "/about", "/api/session/clear"]; // /a/[token] = external action-view links, no login
 
 export default async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;

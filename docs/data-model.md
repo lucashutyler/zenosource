@@ -10,6 +10,18 @@ Field-level detail for the canonical entities named in [docs/architecture.md](ar
 - All entities have `created_at` / `updated_at`; omitted below for brevity.
 - **Item/part identity is denormalized as `item_number` + `description` strings, not a dedicated `Item` entity, for v1.** ZenoSource isn't the system of record for part master data (Epicor is, via its Part master) and a dedicated Item entity would mean owning a redundant master-data sync problem before there's a reason to. **Open**: revisit once a second ERP exists, or once native (no-ERP) item creation is needed for a tenant with no connected ERP.
 
+## Location
+
+Buyer-side delivery location — comparable to, but simpler than, Epicor's Company → Site structure. A ZenoSource `Tenant` spans **all** of a buyer's Epicor Companies; `Location` is the only sub-tenant scope modeled, standing in for Epicor's Site regardless of which Company it technically belongs to. There's no separate Company layer — if the same buyer runs "Company A / Site 1" and "Company B / Site 1" in Epicor, both land as flat `Location` rows under the one tenant. The Epicor Company a synced Location came from, if ever needed, is an integration-layer concern (encode it in `external_ref`), not a core-schema one.
+
+- `id`, `tenant_id`
+- `name`, `code` (short reference, e.g. `CHI-01` — useful for matching against an Epicor Site ID when synced)
+- `source_integration_id` (nullable), `external_ref` (nullable) — set when synced from Epicor's Site records
+- `address_line1`, `address_line2` (nullable), `city`, `region`, `postal_code`, `country`
+- `status`: `active | inactive`
+
+Internal users are assigned to one or more locations (`InternalUser` ↔ `Location`, many-to-many) and, unless they hold the `OWNER` role, can only see and act on POs whose line(s) target a location they're assigned to. A PO with lines split across multiple locations is visible to any user assigned to at least one of them — line-level partial access (e.g. hiding just the lines outside a user's assignment) isn't implemented in v1.
+
 ## Supplier
 
 - `id`, `tenant_id`
@@ -51,6 +63,7 @@ Field-level detail for the canonical entities named in [docs/architecture.md](ar
 - `id`, `purchase_order_id` (FK), `line_number`
 - `item_number`, `description`, `uom`
 - `quantity`, `unit_price` — snapshot at issuance, independent of whatever `PriceList`/`PriceBreak` informed it; a price list changing later doesn't retroactively change an issued line
+- `location_id` (FK) — where this release ships to. Nullable at the database level for migration flexibility, but the create-PO flow requires it; every line should have one in practice.
 - `need_by_date`, `promise_date` (nullable, set once acknowledged)
 - `status`: `pending_acknowledgment | acknowledged | change_proposed | fulfilled | closed | cancelled` — cascades to `cancelled` when the header is cancelled while the line hasn't reached a terminal state yet.
 - `proposed_change` (nullable: `proposed_quantity`, `proposed_unit_price`, `proposed_date`, `proposed_by_supplier_contact`, `proposed_at`) — the supplier-driven change-proposal flow from product.md; buyer accept/reject resolves it back into `acknowledged` (with the line updated) and closes the associated `ActionItem`.
@@ -64,6 +77,7 @@ Field-level detail for the canonical entities named in [docs/architecture.md](ar
 
 - `id`, `rfq_id` (FK)
 - `item_number`, `description`, `uom`, `quantity`, `need_by_date`
+- `location_id` (nullable FK) — intended delivery location, if known this early; carries forward naturally if the RFQ leads to a PO
 
 ## RFQSupplierInvite
 
