@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { getCurrentInternalUser } from "@/lib/dal";
-import { locationScopeFor, pickInternalOwner } from "@/lib/access";
+import { locationScopeFor, pickInternalOwner, allLocationsBelongToTenant } from "@/lib/access";
 import { createActionItem, resolveOpenActionItemsFor, tryResolveActionItem } from "@/lib/action-items";
 
 const LINE_SLOTS = 5;
@@ -74,6 +74,10 @@ export async function createPurchaseOrder(
   if (errors.length > 0) return { error: errors[0] };
   if (lines.length === 0) return { error: "Add at least one line." };
 
+  if (!(await allLocationsBelongToTenant(lines.map((l) => l.locationId), user.tenantId))) {
+    return { error: "One or more locations aren't valid for your organization." };
+  }
+
   const scope = await locationScopeFor(user);
   if (scope && lines.some((l) => !scope.includes(l.locationId))) {
     return { error: "You can only create POs for locations you're assigned to." };
@@ -123,6 +127,10 @@ export async function updateDraftPurchaseOrder(
   const { lines, errors } = parseLines(formData);
   if (errors.length > 0) return { error: errors[0] };
   if (lines.length === 0) return { error: "Add at least one line." };
+
+  if (!(await allLocationsBelongToTenant(lines.map((l) => l.locationId), user.tenantId))) {
+    return { error: "One or more locations aren't valid for your organization." };
+  }
 
   const scope = await locationScopeFor(user);
   if (scope && lines.some((l) => !scope.includes(l.locationId))) {
@@ -189,15 +197,31 @@ export async function duplicatePurchaseOrder(poId: string) {
   redirect(`/dashboard/purchase-orders/${copy.id}`);
 }
 
-export async function issuePurchaseOrder(poId: string) {
+export async function issuePurchaseOrder(
+  poId: string,
+  _state: FormActionState,
+  _formData: FormData
+): Promise<FormActionState> {
   const user = await getCurrentInternalUser();
-  if (!user) return;
+  if (!user) return { error: "Not signed in." };
 
   const po = await db.purchaseOrder.findFirst({
     where: { id: poId, tenantId: user.tenantId },
     include: { supplier: { include: { contacts: true } } },
   });
-  if (!po) return;
+  if (!po) return { error: "PO not found." };
+
+  // Block rather than silently issuing into the void: an ISSUED PO with no
+  // contact to acknowledge it would carry no PO_ACKNOWLEDGE item and no
+  // link for a supplier to ever act on — a non-terminal status nobody is
+  // reminded about, exactly the modeling bug the product philosophy rules
+  // out. Add a contact to the supplier first.
+  const contact = po.supplier.contacts[0];
+  if (!contact) {
+    return {
+      error: `${po.supplier.name} has no contact on file — add one before issuing this PO.`,
+    };
+  }
 
   // Atomic guard: only proceed if this request is the one that actually
   // flips DRAFT -> ISSUED. A second concurrent click (or another team
@@ -207,22 +231,22 @@ export async function issuePurchaseOrder(poId: string) {
     where: { id: poId, status: "DRAFT" },
     data: { status: "ISSUED" },
   });
-  if (result.count === 0) return;
-
-  const contact = po.supplier.contacts[0];
-  if (contact) {
-    await createActionItem({
-      tenantId: user.tenantId,
-      subjectType: "PURCHASE_ORDER",
-      subjectId: po.id,
-      actionType: "PO_ACKNOWLEDGE",
-      ownerType: "EXTERNAL_USER",
-      externalOwnerId: contact.id,
-    });
+  if (result.count === 0) {
+    return { error: "This PO already changed — someone beat you to it." };
   }
+
+  await createActionItem({
+    tenantId: user.tenantId,
+    subjectType: "PURCHASE_ORDER",
+    subjectId: po.id,
+    actionType: "PO_ACKNOWLEDGE",
+    ownerType: "EXTERNAL_USER",
+    externalOwnerId: contact.id,
+  });
 
   revalidatePath(`/dashboard/purchase-orders/${poId}`);
   revalidatePath("/dashboard/purchase-orders");
+  return undefined;
 }
 
 const CancelSchema = z.object({
@@ -237,7 +261,10 @@ export async function cancelPurchaseOrder(
   const user = await getCurrentInternalUser();
   if (!user) return { error: "Not signed in." };
 
-  const po = await db.purchaseOrder.findFirst({ where: { id: poId, tenantId: user.tenantId } });
+  const po = await db.purchaseOrder.findFirst({
+    where: { id: poId, tenantId: user.tenantId },
+    include: { lines: { select: { id: true } } },
+  });
   if (!po) return { error: "PO not found." };
 
   const parsed = CancelSchema.safeParse({ reason: formData.get("reason") });
@@ -267,7 +294,15 @@ export async function cancelPurchaseOrder(
     data: { status: "CANCELLED" },
   });
 
+  // Cancelling makes any pending review on the PO *or any of its lines*
+  // moot — a line-level item (e.g. a supplier's proposed change) left OPEN
+  // here would sit in the inbox and daily reminders forever, pointing at a
+  // cancelled PO nobody can act on anymore.
   await resolveOpenActionItemsFor("PURCHASE_ORDER", poId);
+  await resolveOpenActionItemsFor(
+    "PURCHASE_ORDER_LINE",
+    po.lines.map((l) => l.id)
+  );
 
   revalidatePath(`/dashboard/purchase-orders/${poId}`);
   revalidatePath("/dashboard/purchase-orders");
@@ -355,7 +390,18 @@ export async function acknowledgePOByToken(token: string) {
     return { error: "This item was already resolved — no further action needed." };
   }
 
-  await db.purchaseOrder.update({ where: { id: item.subjectId }, data: { status: "ACKNOWLEDGED" } });
+  // Guarded like every internal transition: winning the action-item race
+  // doesn't mean the PO is still ISSUED — the buyer could cancel it in the
+  // same window. An unconditional update here would resurrect a CANCELLED
+  // PO as ACKNOWLEDGED with its lines still CANCELLED.
+  const result = await db.purchaseOrder.updateMany({
+    where: { id: item.subjectId, status: "ISSUED" },
+    data: { status: "ACKNOWLEDGED" },
+  });
+  if (result.count === 0) {
+    return { error: "This purchase order changed before your response could be recorded." };
+  }
+
   await db.purchaseOrderLine.updateMany({
     where: { purchaseOrderId: item.subjectId, status: "PENDING_ACKNOWLEDGMENT" },
     data: { status: "ACKNOWLEDGED" },
@@ -378,15 +424,26 @@ export async function rejectPOByToken(token: string, formData: FormData) {
   }
 
   const parsed = RejectPOSchema.safeParse({ reason: formData.get("reason") });
-  const po = await db.purchaseOrder.update({
-    where: { id: item.subjectId },
+
+  // Same guard as acknowledge: only write REJECTED if the PO is still
+  // ISSUED, so a concurrent buyer cancellation can't be overwritten.
+  const result = await db.purchaseOrder.updateMany({
+    where: { id: item.subjectId, status: "ISSUED" },
     data: {
       status: "REJECTED",
       rejectedAt: new Date(),
       rejectionReason: parsed.success ? parsed.data.reason || null : null,
     },
+  });
+  if (result.count === 0) {
+    return { error: "This purchase order changed before your response could be recorded." };
+  }
+
+  const po = await db.purchaseOrder.findFirst({
+    where: { id: item.subjectId },
     include: { lines: true },
   });
+  if (!po) return { error: undefined };
 
   const locationIds = [...new Set(po.lines.map((l) => l.locationId).filter((v): v is string => !!v))];
   const ownerId = await pickInternalOwner(po.tenantId, locationIds);

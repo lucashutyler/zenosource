@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { getCurrentInternalUser } from "@/lib/dal";
+import { createActionItem, resolveOpenActionItemsFor } from "@/lib/action-items";
+import { allLocationsBelongToTenant, locationScopeFor, hasLocationAccess } from "@/lib/access";
 
 const LINE_SLOTS = 5;
 
@@ -56,6 +58,16 @@ export async function createRFQ(
   if (errors.length > 0) return { error: errors[0] };
   if (lines.length === 0) return { error: "Add at least one line." };
 
+  const lineLocationIds = lines.map((l) => l.locationId).filter((v): v is string => !!v);
+  if (!(await allLocationsBelongToTenant(lineLocationIds, user.tenantId))) {
+    return { error: "One or more locations aren't valid for your organization." };
+  }
+
+  const scope = await locationScopeFor(user);
+  if (scope && lines.some((l) => l.locationId && !scope.includes(l.locationId))) {
+    return { error: "You can only create RFQs for locations you're assigned to." };
+  }
+
   // Only invite suppliers that actually belong to this tenant — never trust
   // checkbox values from the form directly.
   const requestedSupplierIds = [...new Set(formData.getAll("supplierIds").map(String))];
@@ -63,8 +75,21 @@ export async function createRFQ(
     requestedSupplierIds.length > 0
       ? await db.supplier.findMany({
           where: { id: { in: requestedSupplierIds }, tenantId: user.tenantId },
+          include: { contacts: true },
         })
       : [];
+
+  // Inviting a supplier with no contact would create an invite nobody can
+  // ever reach — no RFQ_SUBMIT_QUOTE item, no link, no way to respond, the
+  // same non-terminal-and-unowned trap issuePurchaseOrder guards against.
+  const contactless = suppliers.filter((s) => s.contacts.length === 0);
+  if (contactless.length > 0) {
+    return {
+      error: `${contactless.map((s) => s.name).join(", ")} ${
+        contactless.length === 1 ? "has" : "have"
+      } no contact on file — add one before inviting them to an RFQ.`,
+    };
+  }
 
   const rfq = await db.rFQ.create({
     data: {
@@ -88,6 +113,21 @@ export async function createRFQ(
     },
   });
 
+  // One RFQ_SUBMIT_QUOTE per invited supplier contact — closeRFQ and
+  // awardRFQQuote already resolve every OPEN item on this RFQ's subject
+  // (see resolveOpenActionItemsFor), so these compose without further
+  // wiring once the RFQ is closed or awarded.
+  for (const supplier of suppliers) {
+    await createActionItem({
+      tenantId: user.tenantId,
+      subjectType: "RFQ",
+      subjectId: rfq.id,
+      actionType: "RFQ_SUBMIT_QUOTE",
+      ownerType: "EXTERNAL_USER",
+      externalOwnerId: supplier.contacts[0].id,
+    });
+  }
+
   revalidatePath("/dashboard/rfqs");
   redirect(`/dashboard/rfqs/${rfq.id}`);
 }
@@ -101,6 +141,9 @@ export async function duplicateRFQ(rfqId: string) {
     include: { lines: true },
   });
   if (!source) return;
+
+  const scope = await locationScopeFor(user);
+  if (!hasLocationAccess(source.lines.map((l) => l.locationId), scope)) return;
 
   // Lines only — no invites, no quotes. Just a starting point for a similar RFQ.
   const copy = await db.rFQ.create({
@@ -132,14 +175,24 @@ export async function closeRFQ(rfqId: string) {
   const user = await getCurrentInternalUser();
   if (!user) return;
 
-  const rfq = await db.rFQ.findFirst({ where: { id: rfqId, tenantId: user.tenantId } });
+  const rfq = await db.rFQ.findFirst({
+    where: { id: rfqId, tenantId: user.tenantId },
+    include: { lines: true },
+  });
   if (!rfq) return;
+
+  const scope = await locationScopeFor(user);
+  if (!hasLocationAccess(rfq.lines.map((l) => l.locationId), scope)) return;
 
   const result = await db.rFQ.updateMany({
     where: { id: rfqId, status: { notIn: ["AWARDED", "CLOSED"] } },
     data: { status: "CLOSED" },
   });
   if (result.count === 0) return;
+
+  // Closing without awarding makes any pending quote/award decision on this
+  // RFQ moot — otherwise it sits in the inbox and daily reminders forever.
+  await resolveOpenActionItemsFor("RFQ", rfqId);
 
   revalidatePath(`/dashboard/rfqs/${rfqId}`);
   revalidatePath("/dashboard/rfqs");
@@ -153,8 +206,14 @@ export async function awardRFQQuote(rfqId: string, quoteId: string) {
   const user = await getCurrentInternalUser();
   if (!user) return;
 
-  const rfq = await db.rFQ.findFirst({ where: { id: rfqId, tenantId: user.tenantId } });
+  const rfq = await db.rFQ.findFirst({
+    where: { id: rfqId, tenantId: user.tenantId },
+    include: { lines: true },
+  });
   if (!rfq) return;
+
+  const scope = await locationScopeFor(user);
+  if (!hasLocationAccess(rfq.lines.map((l) => l.locationId), scope)) return;
 
   const quote = await db.rFQQuote.findFirst({
     where: { id: quoteId, rfqId: rfq.id, status: "SUBMITTED" },
@@ -166,6 +225,8 @@ export async function awardRFQQuote(rfqId: string, quoteId: string) {
     data: { status: "AWARDED", awardedQuoteId: quoteId },
   });
   if (result.count === 0) return;
+
+  await resolveOpenActionItemsFor("RFQ", rfqId);
 
   revalidatePath(`/dashboard/rfqs/${rfqId}`);
   revalidatePath("/dashboard/rfqs");

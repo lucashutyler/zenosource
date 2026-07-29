@@ -22,9 +22,15 @@ export default async function PurchaseOrdersPage({
 }: {
   searchParams: Promise<{ status?: string; locationId?: string; sort?: string }>;
 }) {
-  const { status, locationId, sort } = await searchParams;
+  const { status: rawStatus, locationId, sort } = await searchParams;
   const user = await getCurrentInternalUser();
   if (!user) return null;
+
+  // Validate against the known enum values (STATUS_TONE's keys) before it
+  // reaches Prisma — a hand-edited ?status= would otherwise cast straight
+  // to the enum type and 500 instead of just matching nothing.
+  const status =
+    rawStatus && rawStatus in STATUS_TONE ? (rawStatus as PurchaseOrderStatus) : undefined;
 
   const scope = await locationScopeFor(user);
   const locations = await db.location.findMany({
@@ -32,11 +38,21 @@ export default async function PurchaseOrdersPage({
     orderBy: { name: "asc" },
   });
 
-  const effectiveLocationIds = locationId ? [locationId] : scope;
+  // A ?locationId= filter must narrow the caller's scope, never replace it —
+  // otherwise a MEMBER could hand-edit the URL to see POs at a location
+  // they aren't assigned to. An out-of-scope id resolves to an empty
+  // filter set (matches nothing) rather than being honored.
+  const effectiveLocationIds = locationId
+    ? scope
+      ? scope.includes(locationId)
+        ? [locationId]
+        : []
+      : [locationId]
+    : scope;
 
   const where: Prisma.PurchaseOrderWhereInput = {
     tenantId: user.tenantId,
-    ...(status ? { status: status as PurchaseOrderStatus } : {}),
+    ...(status ? { status } : {}),
     ...(effectiveLocationIds
       ? { lines: { some: { locationId: { in: effectiveLocationIds } } } }
       : {}),
@@ -49,9 +65,18 @@ export default async function PurchaseOrdersPage({
   });
 
   // "Needs your action" indicator — reads the same ActionItem records the
-  // dashboard inbox does, doesn't fork the mechanism.
+  // dashboard inbox does, doesn't fork the mechanism. Scoped to items this
+  // specific user owns (matching the inbox's own query exactly) — without
+  // this it lit up for items owned by the supplier or by a teammate, which
+  // trains users to ignore a dot that's usually not actually theirs to act on.
   const openItems = await db.actionItem.findMany({
-    where: { tenantId: user.tenantId, status: "OPEN", subjectType: "PURCHASE_ORDER" },
+    where: {
+      tenantId: user.tenantId,
+      status: "OPEN",
+      subjectType: "PURCHASE_ORDER",
+      ownerType: "INTERNAL_USER",
+      internalOwnerId: user.id,
+    },
     select: { subjectId: true },
   });
   const needsAction = new Set(openItems.map((i) => i.subjectId));

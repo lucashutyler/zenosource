@@ -1,5 +1,6 @@
 import { getCurrentInternalUser } from "@/lib/dal";
 import { countOpenActionItemsForInternalUser } from "@/lib/action-items";
+import { isMailboxActive } from "@/lib/email/sender";
 import { DashboardShell } from "./shell";
 
 export default async function DashboardLayout({
@@ -11,7 +12,7 @@ export default async function DashboardLayout({
   const openCount = await countOpenActionItemsForInternalUser(user.id);
 
   return (
-    <DashboardShell userName={user.name} openCount={openCount}>
+    <DashboardShell userName={user.name} openCount={openCount} showMailbox={isMailboxActive()}>
       {children}
     </DashboardShell>
   );

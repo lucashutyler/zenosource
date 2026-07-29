@@ -22,6 +22,9 @@ export async function createLocation(
 ): Promise<FormActionState> {
   const user = await getCurrentInternalUser();
   if (!user) return { error: "Not signed in." };
+  // Locations define the scope MEMBERs are restricted to, so managing them
+  // is OWNER-only — the fixed permission matrix from docs/todo.md's Phase 1a.
+  if (user.role !== "OWNER") return { error: "Only owners can add locations." };
 
   const parsed = CreateLocationSchema.safeParse({
     name: formData.get("name"),
@@ -65,6 +68,10 @@ export async function assignUserToLocation(
 ): Promise<FormActionState> {
   const user = await getCurrentInternalUser();
   if (!user) return { error: "Not signed in." };
+  // Without this gate a MEMBER could self-assign to any location in the
+  // tenant, permanently widening their own PO/RFQ visibility — assignment
+  // is an access-control decision, not a convenience toggle.
+  if (user.role !== "OWNER") return { error: "Only owners can manage location assignments." };
 
   const location = await db.location.findFirst({
     where: { id: locationId, tenantId: user.tenantId },

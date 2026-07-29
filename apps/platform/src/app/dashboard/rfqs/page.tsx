@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getCurrentInternalUser } from "@/lib/dal";
 import { db } from "@/lib/db";
+import { locationScopeFor } from "@/lib/access";
+import { rfqDisplayNumber } from "@/lib/display";
 import { Card, PageHeader, LinkButton, Badge, Select } from "@/components/ui";
 import type { Prisma } from "@/generated/prisma/client";
 import type { RFQStatus } from "@/generated/prisma/enums";
@@ -18,13 +20,23 @@ export default async function RFQsPage({
 }: {
   searchParams: Promise<{ status?: string; sort?: string }>;
 }) {
-  const { status, sort } = await searchParams;
+  const { status: rawStatus, sort } = await searchParams;
   const user = await getCurrentInternalUser();
   if (!user) return null;
 
+  const status =
+    rawStatus && rawStatus in STATUS_TONE ? (rawStatus as RFQStatus) : undefined;
+
+  const scope = await locationScopeFor(user);
+
   const where: Prisma.RFQWhereInput = {
     tenantId: user.tenantId,
-    ...(status ? { status: status as RFQStatus } : {}),
+    ...(status ? { status } : {}),
+    // Members are restricted to POs at their assigned locations (see
+    // docs/data-model.md#location); RFQs carry the same per-line locationId
+    // and must be scoped identically — otherwise a restricted member sees
+    // every RFQ in the tenant regardless of assignment.
+    ...(scope ? { lines: { some: { locationId: { in: scope } } } } : {}),
   };
 
   const rfqs = await db.rFQ.findMany({
@@ -80,7 +92,7 @@ export default async function RFQsPage({
                 >
                   <div>
                     <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
-                      RFQ-{rfq.id.slice(-6).toUpperCase()}
+                      {rfqDisplayNumber(rfq.id)}
                     </p>
                     <p className="text-xs text-zinc-500">
                       {rfq._count.lines} line{rfq._count.lines === 1 ? "" : "s"} ·{" "}

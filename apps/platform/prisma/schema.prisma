@@ -97,15 +97,17 @@ model InternalUserLocation {
   @@unique([internalUserId, locationId])
 }
 
+// No passwordHash here on purpose: persistent supplier accounts are deferred
+// out of v1 (docs/todo.md#decided) — the scoped action-view link is the entire
+// external auth surface.
 model SupplierContact {
-  id           String   @id @default(cuid())
-  supplierId   String
-  supplier     Supplier @relation(fields: [supplierId], references: [id])
-  name         String
-  email        String
-  passwordHash String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id         String   @id @default(cuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+  name       String
+  email      String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   actionItems ActionItem[] @relation("ActionItemExternalOwner")
 
@@ -458,4 +460,19 @@ model ActionItem {
   @@index([tenantId])
   @@index([internalOwnerId])
   @@index([externalOwnerId])
+}
+
+// Outbound email captured by the dev mailbox instead of being delivered —
+// only written while no real email provider is configured (EMAIL_PROVIDER
+// unset; see src/lib/email/sender.ts), and read only by /dashboard/emails,
+// which 404s once a provider is set. Deliberately not tenant-scoped: this
+// simulates the mail server, not a product entity.
+model CapturedEmail {
+  id        String   @id @default(cuid())
+  toEmail   String
+  subject   String
+  textBody  String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }

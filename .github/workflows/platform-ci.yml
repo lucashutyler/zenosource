@@ -67,6 +67,7 @@ jobs:
         run: |
           echo "DATABASE_URL=\"${TEST_DATABASE_URL}\"" > .env.test
           echo "SESSION_SECRET=\"${TEST_SESSION_SECRET}\"" >> .env.test
+          echo "APP_BASE_URL=\"http://localhost:3100\"" >> .env.test
       - run: npx prisma generate
       - run: npx dotenv -e .env.test -- npx prisma db push
       - run: npm test
@@ -99,6 +100,7 @@ jobs:
         run: |
           echo "DATABASE_URL=\"${TEST_DATABASE_URL}\"" > .env.test
           echo "SESSION_SECRET=\"${TEST_SESSION_SECRET}\"" >> .env.test
+          echo "APP_BASE_URL=\"http://localhost:3100\"" >> .env.test
       - run: npx prisma generate
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e

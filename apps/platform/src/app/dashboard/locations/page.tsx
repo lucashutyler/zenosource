@@ -17,7 +17,11 @@ export default async function LocationsPage() {
       <PageHeader
         title="Locations"
         subtitle="Every PO line ships to one of these. Users are assigned to the locations they manage."
-        action={<LinkButton href="/dashboard/locations/new">Add location</LinkButton>}
+        action={
+          user?.role === "OWNER" ? (
+            <LinkButton href="/dashboard/locations/new">Add location</LinkButton>
+          ) : undefined
+        }
       />
 
       {locations.length === 0 ? (

@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X, ChevronLeft, ChevronRight } from "lucide-react";
-import { NAV_LINKS } from "./nav-links";
+import { NAV_LINKS, MAILBOX_NAV_LINK } from "./nav-links";
 import { UserMenu } from "./user-menu";
 
 function isActive(pathname: string, href: string) {
@@ -14,15 +14,18 @@ function isActive(pathname: string, href: string) {
 export function DashboardShell({
   userName,
   openCount,
+  showMailbox,
   children,
 }: {
   userName?: string;
   openCount: number;
+  showMailbox?: boolean;
   children: ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+  const navLinks = showMailbox ? [...NAV_LINKS, MAILBOX_NAV_LINK] : NAV_LINKS;
 
   // Auto-close the mobile drawer whenever navigation happens. Adjusted
   // during render (React's recommended pattern for "reset state when a
@@ -71,7 +74,7 @@ export function DashboardShell({
         </div>
 
         <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
-          {NAV_LINKS.map((link) => {
+          {navLinks.map((link) => {
             const active = isActive(pathname, link.href);
             const Icon = link.icon;
             return (

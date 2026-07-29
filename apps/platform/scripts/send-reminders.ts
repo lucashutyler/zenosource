@@ -14,7 +14,7 @@ const db = new PrismaClient({ adapter });
 
 const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
 
-runReminderJob({ db, sender: getEmailSender(), baseUrl })
+runReminderJob({ db, sender: getEmailSender(db), baseUrl })
   .then(({ internalEmailsSent, externalEmailsSent }) => {
     console.log(
       `Reminder job complete: ${internalEmailsSent} internal digest(s), ${externalEmailsSent} external digest(s).`

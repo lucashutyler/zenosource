@@ -4,6 +4,10 @@ import { useActionState } from "react";
 import { createLocation } from "@/app/actions/locations";
 import { Card, Field, Input, ErrorText, SubmitButton, PageHeader } from "@/components/ui";
 
+// Server-side enforcement lives in createLocation itself (OWNER-only) — this
+// page isn't gated per-role since getCurrentInternalUser() runs in a client
+// component's parent layout, not here; the action will simply reject a
+// MEMBER's submission with a clear error rather than silently succeeding.
 export default function NewLocationPage() {
   const [state, action, pending] = useActionState(createLocation, undefined);
 

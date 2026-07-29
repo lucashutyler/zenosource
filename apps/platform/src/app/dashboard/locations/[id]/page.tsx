@@ -53,7 +53,9 @@ export default async function LocationDetailPage({
             ))}
           </ul>
         )}
-        <AssignUserForm locationId={location.id} candidates={candidates} />
+        {user.role === "OWNER" && (
+          <AssignUserForm locationId={location.id} candidates={candidates} />
+        )}
       </Card>
     </div>
   );

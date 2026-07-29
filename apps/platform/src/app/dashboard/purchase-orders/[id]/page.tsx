@@ -1,15 +1,15 @@
 import { notFound } from "next/navigation";
 import { getCurrentInternalUser } from "@/lib/dal";
 import { db } from "@/lib/db";
-import { locationScopeFor } from "@/lib/access";
+import { locationScopeFor, hasLocationAccess } from "@/lib/access";
 import {
-  issuePurchaseOrder,
   duplicatePurchaseOrder,
   acceptChangeProposal,
   rejectChangeProposal,
 } from "@/app/actions/purchase-orders";
 import { Card, PageHeader, Badge, LinkButton, SubmitButton } from "@/components/ui";
 import { CancelForm } from "./cancel-form";
+import { IssueForm } from "./issue-form";
 
 const STATUS_TONE: Record<string, "neutral" | "warning" | "success" | "danger"> = {
   DRAFT: "neutral",
@@ -46,12 +46,8 @@ export default async function PurchaseOrderDetailPage({
   if (!po) notFound();
 
   const scope = await locationScopeFor(user);
-  if (scope) {
-    const hasAccess = po.lines.some((l) => l.locationId && scope.includes(l.locationId));
-    if (!hasAccess) notFound();
-  }
+  if (!hasLocationAccess(po.lines.map((l) => l.locationId), scope)) notFound();
 
-  const boundIssue = issuePurchaseOrder.bind(null, po.id);
   const boundDuplicate = duplicatePurchaseOrder.bind(null, po.id);
 
   return (
@@ -68,9 +64,7 @@ export default async function PurchaseOrderDetailPage({
             <LinkButton href={`/dashboard/purchase-orders/${po.id}/edit`} variant="secondary">
               Edit
             </LinkButton>
-            <form action={boundIssue}>
-              <SubmitButton>Issue to supplier</SubmitButton>
-            </form>
+            <IssueForm poId={po.id} />
           </>
         )}
         <form action={boundDuplicate}>

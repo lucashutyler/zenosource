@@ -32,6 +32,7 @@ const PO_STATUS_CYCLE = [
 
 async function main() {
   // Idempotent: wipe prior demo data so this can be re-run freely in dev.
+  await db.capturedEmail.deleteMany();
   await db.actionItem.deleteMany();
   await db.rFQQuoteLine.deleteMany();
   await db.rFQQuote.deleteMany();

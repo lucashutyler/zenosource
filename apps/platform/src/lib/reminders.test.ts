@@ -3,6 +3,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { runReminderJob } from "./reminders";
 import type { EmailSender, EmailMessage } from "@/lib/email/sender";
+import { wipeTestDb } from "@/lib/testing/wipe-test-db";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const db = new PrismaClient({ adapter });
@@ -24,30 +25,11 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-// Matches prisma/seed.ts's deletion order — the test DB is shared with the
-// E2E suite (see e2e/global-setup.ts), so this needs to clean every table
-// that seed could have populated, not just the ones this file itself uses.
-async function wipe() {
-  await db.actionItem.deleteMany();
-  await db.rFQQuoteLine.deleteMany();
-  await db.rFQQuote.deleteMany();
-  await db.rFQSupplierInvite.deleteMany();
-  await db.rFQLine.deleteMany();
-  await db.rFQ.deleteMany();
-  await db.purchaseOrderLine.deleteMany();
-  await db.purchaseOrder.deleteMany();
-  await db.supplierContact.deleteMany();
-  await db.priceBreak.deleteMany();
-  await db.priceListItem.deleteMany();
-  await db.priceList.deleteMany();
-  await db.supplier.deleteMany();
-  await db.internalUserLocation.deleteMany();
-  await db.location.deleteMany();
-  await db.internalUser.deleteMany();
-  await db.tenant.deleteMany();
-}
-
-beforeEach(wipe);
+// The test DB is shared with the E2E suite (see e2e/global-setup.ts) and
+// with every other Vitest file, so this needs to clean every table any of
+// them could have populated, not just the ones this file itself uses — see
+// src/lib/testing/wipe-test-db.ts.
+beforeEach(() => wipeTestDb(db));
 
 describe("runReminderJob", () => {
   it("sends one digest per internal owner covering all their open items", async () => {

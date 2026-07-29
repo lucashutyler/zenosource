@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { getCurrentInternalUser } from "@/lib/dal";
-import { listOpenActionItemsForInternalUser, resolveActionItemHrefs } from "@/lib/action-items";
+import { listOpenActionItemsForInternalUser, resolveActionItemContext } from "@/lib/action-items";
 import { ACTION_LABELS } from "@/lib/action-labels";
 
 export default async function DashboardPage() {
   const user = await getCurrentInternalUser();
   const items = await listOpenActionItemsForInternalUser(user.id);
-  const hrefs = await resolveActionItemHrefs(items);
+  const context = await resolveActionItemContext(items);
 
   return (
     <div>
@@ -24,25 +24,33 @@ export default async function DashboardPage() {
       ) : (
         <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950">
           {items.map((item) => {
-            const href = hrefs.get(item.id);
+            const ctx = context.get(item.id);
+            // Every segment is optional except entityLabel, so a missing
+            // lookup (a stale subject, or PO_SUGGESTION's no-data case)
+            // degrades to a shorter line instead of an empty/broken one.
+            const subtitle = [
+              ctx?.entityLabel ?? item.subjectType.replaceAll("_", " ").toLowerCase(),
+              ctx?.identifier,
+              ctx?.detail,
+              `opened ${item.openedAt.toLocaleDateString()}`,
+            ]
+              .filter(Boolean)
+              .join(" · ");
             const body = (
-              <div className="flex flex-1 items-center justify-between px-4 py-3">
-                <div>
+              <div className="flex flex-1 items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
                   <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
                     {ACTION_LABELS[item.actionType] ?? item.actionType}
                   </p>
-                  <p className="text-xs text-zinc-500">
-                    {item.subjectType.replaceAll("_", " ").toLowerCase()} · opened{" "}
-                    {item.openedAt.toLocaleDateString()}
-                  </p>
+                  <p className="text-xs text-zinc-500">{subtitle}</p>
                 </div>
-                {href && <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400" />}
+                {ctx?.href && <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400" />}
               </div>
             );
             return (
               <li key={item.id}>
-                {href ? (
-                  <Link href={href} className="flex hover:bg-zinc-50 dark:hover:bg-zinc-900">
+                {ctx?.href ? (
+                  <Link href={ctx.href} className="flex hover:bg-zinc-50 dark:hover:bg-zinc-900">
                     {body}
                   </Link>
                 ) : (

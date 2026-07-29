@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { getCurrentInternalUser } from "@/lib/dal";
 import { db } from "@/lib/db";
+import { locationScopeFor, hasLocationAccess } from "@/lib/access";
+import { rfqDisplayNumber } from "@/lib/display";
 import { awardRFQQuote, duplicateRFQ, closeRFQ } from "@/app/actions/rfqs";
 import { Card, PageHeader, Badge, SubmitButton } from "@/components/ui";
 
@@ -38,6 +40,9 @@ export default async function RFQDetailPage({
   });
   if (!rfq) notFound();
 
+  const scope = await locationScopeFor(user);
+  if (!hasLocationAccess(rfq.lines.map((l) => l.locationId), scope)) notFound();
+
   const submittedQuotes = rfq.quotes.filter((q) => q.status === "SUBMITTED");
   const boundDuplicate = duplicateRFQ.bind(null, rfq.id);
   const boundClose = closeRFQ.bind(null, rfq.id);
@@ -46,7 +51,7 @@ export default async function RFQDetailPage({
   return (
     <div>
       <PageHeader
-        title={`RFQ-${rfq.id.slice(-6).toUpperCase()}`}
+        title={rfqDisplayNumber(rfq.id)}
         subtitle={`Created ${rfq.createdAt.toLocaleDateString()}`}
         action={
           <Badge tone={STATUS_TONE[rfq.status] ?? "neutral"}>
