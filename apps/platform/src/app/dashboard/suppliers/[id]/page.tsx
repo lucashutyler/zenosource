@@ -122,7 +122,17 @@ export default async function SupplierDetailPage({
       />
 
       <Section title="Details">
-        <SupplierDetailsForm supplier={supplier} />
+        {/* Explicit fields, not the whole record. Nothing on Supplier is a
+            Decimal today, but narrowing here is what stops the next column
+            added to the model from silently crossing the boundary. */}
+        <SupplierDetailsForm
+          supplier={{
+            id: supplier.id,
+            name: supplier.name,
+            primaryContactName: supplier.primaryContactName,
+            primaryContactEmail: supplier.primaryContactEmail,
+          }}
+        />
       </Section>
 
       <Section

@@ -124,7 +124,18 @@ export default async function PriceListDetailPage({
       />
 
       <Section title="When it applies">
-        <PriceListDetailsForm priceList={priceList} suppliers={suppliers} />
+        {/* Only the four fields the form edits. Passing the whole record would
+            drag `items[].priceBreaks[].unitPrice` — a Prisma Decimal, which is
+            a class instance — across the Client Component boundary. */}
+        <PriceListDetailsForm
+          priceList={{
+            id: priceList.id,
+            supplierId: priceList.supplierId,
+            effectiveFrom: priceList.effectiveFrom,
+            effectiveTo: priceList.effectiveTo,
+          }}
+          suppliers={suppliers}
+        />
       </Section>
 
       <Section
