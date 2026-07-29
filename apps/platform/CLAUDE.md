@@ -57,7 +57,19 @@ To add a migration without an interactive prompt (`prisma migrate dev` refuses t
 npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script -o /tmp/next.sql
 ```
 
-then move the SQL into `prisma/migrations/<timestamp>_<name>/migration.sql`, hand-edit anything that needs a backfill (a new `NOT NULL` column on a populated table has to be added nullable, filled, then constrained — see `20260729093000_reporting_history_and_document_numbers`), and `npx prisma migrate deploy`. The shadow database this needs is configured in `prisma.config.ts` and defaults to a sibling `zenosource_shadow` on the same local Postgres.
+then move the SQL into `prisma/migrations/<timestamp>_<name>/migration.sql`, hand-edit anything that needs a backfill (a new `NOT NULL` column on a populated table has to be added nullable, filled, then constrained — see `20260729093000_reporting_history_and_document_numbers`), and `npx prisma migrate deploy`.
+
+`migrate diff --from-migrations` replays the migrations into a throwaway shadow database, configured in `prisma.config.ts` and defaulting to a sibling `zenosource_shadow`. Create it once:
+
+```bash
+docker compose exec -T db psql -U zenosource -d postgres -c "CREATE DATABASE zenosource_shadow;"
+```
+
+Verify a migration before committing it by applying it to a copy of a *populated* database — a backfill that works on an empty schema proves very little:
+
+```bash
+docker compose exec -T db psql -U zenosource -d postgres -c "CREATE DATABASE zenosource_check TEMPLATE zenosource;"
+```
 
 ## Testing
 
