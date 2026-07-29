@@ -16,7 +16,7 @@ Every product decision should ask "does this add configurability we don't want" 
 
 Two populations, one platform:
 - **Internal users** — employees of the buyer organization (procurement, sourcing, ops). Authenticate via the buyer org's own IdP.
-- **External users** — suppliers. Usually no enterprise IdP relationship with the buyer; can resolve individual action items straight from the reminder email with no login at all, or use app-native password auth for persistent account access.
+- **External users** — suppliers. Usually no enterprise IdP relationship with the buyer; they resolve action items straight from the reminder email with no login at all — the scoped action-view link is the entire v1 external surface. Persistent supplier accounts (password login, a supplier portal) are deliberately deferred; see [docs/todo.md](docs/todo.md#decided).
 
 Third-party IdP support starts with **Okta** (OIDC + SAML, SCIM provisioning). Detail: [docs/integrations.md](docs/integrations.md#okta-idp).
 
@@ -48,3 +48,5 @@ Each subproject is independently deployable and free to choose its own language,
 - [docs/data-model.md](docs/data-model.md) — field-level schema for the canonical entities
 - [docs/integrations.md](docs/integrations.md) — Epicor and Okta integration specifics, pattern for adding new integrations
 - [docs/todo.md](docs/todo.md) — phased build plan and open questions for review
+- [docs/test1a.md](docs/test1a.md) — UX/UI user-testing report on the Phase 1a build; the source Phase 1b is scoped from
+- [docs/test1a-2.md](docs/test1a-2.md) — the design-direction companion to the above: what the product should *feel* like; merged into Phase 1b alongside test1a.md
