@@ -1,4 +1,7 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = { title: "About" };
 
 type Dep = { name: string; version: string; license: string; url: string };
 
@@ -17,36 +20,35 @@ const DEPENDENCIES: Dep[] = [
   { name: "jose", version: "6.2.4", license: "MIT", url: "https://github.com/panva/jose" },
   { name: "bcryptjs", version: "3.0.3", license: "BSD-3-Clause", url: "https://github.com/dcodeIO/bcrypt.js" },
   { name: "Zod", version: "4.4.3", license: "MIT", url: "https://github.com/colinhacks/zod" },
+  { name: "lucide-react", version: "1.27.0", license: "ISC", url: "https://github.com/lucide-icons/lucide" },
 ];
 
 export default function AboutPage() {
   return (
-    <div className="max-w-2xl px-6 py-16">
-      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-        ZenoSource
-      </p>
-      <h1 className="mb-8 text-lg font-semibold text-zinc-950 dark:text-zinc-50">About</h1>
+    <div className="mx-auto max-w-2xl px-6 py-16">
+      <p className="mb-1 text-xs font-medium uppercase tracking-wider text-ink-faint">ZenoSource</p>
+      <h1 className="mb-8 text-xl font-semibold tracking-tight text-ink">About</h1>
 
       <section className="mb-10">
-        <h2 className="mb-3 text-sm font-medium text-zinc-950 dark:text-zinc-50">
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-faint">
           Open source acknowledgments
         </h2>
-        <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-          ZenoSource is built with these open source projects, among others pulled in
-          transitively under their own compatible licenses.
+        <p className="mb-4 text-sm text-ink-soft">
+          ZenoSource is built with these open source projects, among others pulled in transitively
+          under their own compatible licenses.
         </p>
-        <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+        <ul className="divide-y divide-rule border border-rule bg-paper-raised">
           {DEPENDENCIES.map((dep) => (
-            <li key={dep.name} className="flex items-center justify-between px-4 py-3 text-sm">
+            <li key={dep.name} className="flex items-center justify-between px-4 py-2.5 text-sm">
               <a
                 href={dep.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-zinc-900 underline underline-offset-2 dark:text-zinc-100"
+                className="text-ink underline underline-offset-2"
               >
                 {dep.name}
               </a>
-              <span className="text-xs text-zinc-500">
+              <span className="font-mono text-xs text-ink-faint">
                 v{dep.version} · {dep.license}
               </span>
             </li>
@@ -54,7 +56,7 @@ export default function AboutPage() {
         </ul>
       </section>
 
-      <Link href="/dashboard" className="text-sm text-zinc-500 underline underline-offset-2">
+      <Link href="/dashboard" className="text-sm text-ink-soft underline underline-offset-2">
         Back to ZenoSource
       </Link>
     </div>

@@ -27,6 +27,22 @@ env:
 jobs:
   typecheck-and-lint:
     runs-on: ubuntu-latest
+    services:
+      # Only needed for the migration-drift check below, which replays the
+      # migrations directory into a shadow database.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zenosource
+          POSTGRES_PASSWORD: zenosource
+          POSTGRES_DB: zenosource_shadow
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U zenosource"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,6 +54,15 @@ jobs:
       - run: npx prisma generate
       - run: npx tsc --noEmit
       - run: npm run lint
+      # The guard against the class of bug Phase 1 shipped: a schema edit
+      # applied with `db push` and never written to a migration file. Exits 2
+      # when the migrations directory doesn't fully reproduce schema.prisma,
+      # so drift fails the build instead of surfacing at deploy time.
+      - name: Schema and migrations agree
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+          SHADOW_DATABASE_URL: "postgresql://zenosource:zenosource@localhost:5434/zenosource_shadow?schema=public"
+        run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
 
   unit-tests:
     runs-on: ubuntu-latest
@@ -69,7 +94,9 @@ jobs:
           echo "SESSION_SECRET=\"${TEST_SESSION_SECRET}\"" >> .env.test
           echo "APP_BASE_URL=\"http://localhost:3100\"" >> .env.test
       - run: npx prisma generate
-      - run: npx dotenv -e .env.test -- npx prisma db push
+      # `migrate deploy`, not `db push` — CI is the thing that catches a
+      # schema change that never got a migration file.
+      - run: npx dotenv -e .env.test -- npx prisma migrate deploy
       - run: npm test
 
   e2e-tests:

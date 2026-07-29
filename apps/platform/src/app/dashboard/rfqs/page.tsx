@@ -1,33 +1,62 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getCurrentInternalUser } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { locationScopeFor } from "@/lib/access";
-import { rfqDisplayNumber } from "@/lib/display";
-import { Card, PageHeader, LinkButton, Badge, Select } from "@/components/ui";
+import { normalizeDocumentNumberQuery } from "@/lib/document-number";
+import { loadOpenWork, pageFrom, paginationRange } from "@/lib/board";
+import { RFQ_COURT, RFQ_EXPECTED_ACTION, RFQ_STATUS_LABEL, whatsOwed } from "@/lib/lifecycle";
+import { formatCount, formatDate, plural } from "@/lib/format";
+import {
+  CourtMark,
+  DateText,
+  DocNumber,
+  Dwell,
+  EmptyState,
+  Ledger,
+  LinkButton,
+  PageHeader,
+  StatusChip,
+  Td,
+  Th,
+} from "@/components/ui";
+import { ListFilters, Pagination } from "@/components/list-controls";
+import { InviteeDots } from "./invitee-dots";
 import type { Prisma } from "@/generated/prisma/client";
 import type { RFQStatus } from "@/generated/prisma/enums";
 
-const STATUS_TONE: Record<string, "neutral" | "warning" | "success" | "danger"> = {
-  DRAFT: "neutral",
-  SENT: "warning",
-  RESPONSES_OPEN: "warning",
-  AWARDED: "success",
-  CLOSED: "neutral",
-};
+export const metadata: Metadata = { title: "RFQs" };
+
+const STATUS_VALUES = Object.keys(RFQ_STATUS_LABEL) as RFQStatus[];
 
 export default async function RFQsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; sort?: string }>;
+  searchParams: Promise<{ status?: string; q?: string; page?: string }>;
 }) {
-  const { status: rawStatus, sort } = await searchParams;
+  const params = await searchParams;
   const user = await getCurrentInternalUser();
-  if (!user) return null;
 
   const status =
-    rawStatus && rawStatus in STATUS_TONE ? (rawStatus as RFQStatus) : undefined;
+    params.status && STATUS_VALUES.includes(params.status as RFQStatus)
+      ? (params.status as RFQStatus)
+      : undefined;
 
   const scope = await locationScopeFor(user);
+
+  const q = params.q?.trim();
+  const numberQuery = q ? normalizeDocumentNumberQuery(q) : null;
+  const search: Prisma.RFQWhereInput | undefined = q
+    ? {
+        OR: [
+          ...(numberQuery ? [{ number: { contains: numberQuery } }] : []),
+          { number: { contains: q, mode: "insensitive" as const } },
+          { lines: { some: { itemNumber: { contains: q, mode: "insensitive" as const } } } },
+          { lines: { some: { description: { contains: q, mode: "insensitive" as const } } } },
+          { invites: { some: { supplier: { name: { contains: q, mode: "insensitive" as const } } } } },
+        ],
+      }
+    : undefined;
 
   const where: Prisma.RFQWhereInput = {
     tenantId: user.tenantId,
@@ -37,77 +66,172 @@ export default async function RFQsPage({
     // and must be scoped identically — otherwise a restricted member sees
     // every RFQ in the tenant regardless of assignment.
     ...(scope ? { lines: { some: { locationId: { in: scope } } } } : {}),
+    ...(search ?? {}),
   };
+
+  const total = await db.rFQ.count({ where });
+  const range = paginationRange(pageFrom(params), total);
 
   const rfqs = await db.rFQ.findMany({
     where,
-    include: { _count: { select: { lines: true, invites: true } } },
-    orderBy: { createdAt: sort === "oldest" ? "asc" : "desc" },
+    include: {
+      _count: { select: { lines: true } },
+      invites: { include: { supplier: { select: { name: true } } } },
+      awardedQuote: { include: { supplier: { select: { name: true } } } },
+    },
+    orderBy: { updatedAt: "desc" },
+    skip: range.skip,
+    take: range.take,
   });
+
+  const work = await loadOpenWork({
+    tenantId: user.tenantId,
+    viewerId: user.id,
+    subjectType: "RFQ",
+    subjectIds: rfqs.map((r) => r.id),
+  });
+
+  const rows = [...rfqs].sort((a, b) => {
+    const aw = work.get(a.id);
+    const bw = work.get(b.id);
+    if (aw && bw) return aw.openedAt.getTime() - bw.openedAt.getTime();
+    if (aw) return -1;
+    if (bw) return 1;
+    return b.updatedAt.getTime() - a.updatedAt.getTime();
+  });
+
+  const filtered = Boolean(status || q);
 
   return (
     <div>
       <PageHeader
-        title="RFQs"
-        action={<LinkButton href="/dashboard/rfqs/new">New RFQ</LinkButton>}
+        title="Requests for quote"
+        meta={
+          total > 0 ? (
+            <>
+              {formatCount(total)} {plural(total, "request")}
+              {filtered ? " matching" : ""} · waiting longest first
+            </>
+          ) : undefined
+        }
+        actions={
+          <LinkButton href="/dashboard/rfqs/new" variant="primary">
+            New RFQ
+          </LinkButton>
+        }
       />
 
-      <form method="get" className="mb-4 flex flex-wrap items-end gap-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-500">Status</label>
-          <Select name="status" defaultValue={status ?? ""}>
-            <option value="">All</option>
-            {Object.keys(STATUS_TONE).map((s) => (
-              <option key={s} value={s}>
-                {s.replaceAll("_", " ").toLowerCase()}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-500">Sort</label>
-          <Select name="sort" defaultValue={sort ?? "newest"}>
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-          </Select>
-        </div>
-        <button
-          type="submit"
-          className="rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700"
-        >
-          Apply
-        </button>
-      </form>
+      <ListFilters
+        searchPlaceholder="Number, supplier, part or description"
+        searchValue={q ?? ""}
+        filters={[
+          {
+            name: "status",
+            label: "Status",
+            value: params.status ?? "",
+            allLabel: "Any status",
+            options: STATUS_VALUES.map((s) => ({ value: s, label: RFQ_STATUS_LABEL[s] })),
+          },
+        ]}
+      />
 
-      {rfqs.length === 0 ? (
-        <p className="text-sm text-zinc-500">No RFQs match these filters.</p>
+      {rows.length === 0 ? (
+        <EmptyState
+          headline={filtered ? "Nothing matches those filters." : "No requests for quote yet."}
+          body={
+            filtered
+              ? "Try a part number or a supplier name."
+              : "Ask several suppliers for a price on the same lines, then compare them side by side."
+          }
+          action={
+            filtered ? (
+              <LinkButton href="/dashboard/rfqs">Clear filters</LinkButton>
+            ) : (
+              <LinkButton href="/dashboard/rfqs/new" variant="primary">
+                New RFQ
+              </LinkButton>
+            )
+          }
+        />
       ) : (
-        <Card>
-          <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-            {rfqs.map((rfq) => (
-              <li key={rfq.id}>
-                <Link
-                  href={`/dashboard/rfqs/${rfq.id}`}
-                  className="flex items-center justify-between px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
-                      {rfqDisplayNumber(rfq.id)}
-                    </p>
-                    <p className="text-xs text-zinc-500">
-                      {rfq._count.lines} line{rfq._count.lines === 1 ? "" : "s"} ·{" "}
-                      {rfq._count.invites} supplier{rfq._count.invites === 1 ? "" : "s"} invited ·{" "}
-                      {rfq.createdAt.toLocaleDateString()}
-                    </p>
-                  </div>
-                  <Badge tone={STATUS_TONE[rfq.status] ?? "neutral"}>
-                    {rfq.status.replaceAll("_", " ").toLowerCase()}
-                  </Badge>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
+        <>
+          <Ledger caption="Requests for quote, waiting longest first">
+            <thead>
+              <tr>
+                <Th width="7.5rem">№</Th>
+                <Th>What&apos;s owed</Th>
+                <Th width="10rem">Invitees</Th>
+                <Th align="right" width="6rem">Waiting</Th>
+                <Th align="right" width="7.5rem">Quotes due</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((rfq) => {
+                const open = work.get(rfq.id);
+                const expected = RFQ_EXPECTED_ACTION[rfq.status];
+                const unowned = expected !== null && !open;
+                const settled =
+                  rfq.status === "CLOSED"
+                    ? `closed ${formatDate(rfq.closedAt ?? rfq.updatedAt)}`
+                    : null;
+
+                return (
+                  <tr key={rfq.id} className="hover:bg-rule/30">
+                    <Td mono>
+                      <Link
+                        href={`/dashboard/rfqs/${rfq.id}`}
+                        className="underline-offset-2 hover:underline"
+                      >
+                        <DocNumber>{rfq.number}</DocNumber>
+                      </Link>
+                      <span className="mt-0.5 block text-xs text-ink-faint">
+                        {rfq._count.lines} {plural(rfq._count.lines, "line")}
+                      </span>
+                    </Td>
+                    <Td>
+                      {unowned ? (
+                        <StatusChip variant="unowned">
+                          {RFQ_STATUS_LABEL[rfq.status]} — nobody chased
+                        </StatusChip>
+                      ) : (
+                        <CourtMark court={RFQ_COURT[rfq.status]}>
+                          {rfq.status === "AWARDED" && rfq.awardedQuote
+                            ? `Won by ${rfq.awardedQuote.supplier.name} — raise the PO`
+                            : whatsOwed({
+                                actionType: open?.actionType ?? null,
+                                supplierName: `${rfq.invites.length} ${plural(rfq.invites.length, "supplier")}`,
+                                ownedByViewer: open?.ownedByViewer,
+                                settled: settled ?? undefined,
+                              })}
+                        </CourtMark>
+                      )}
+                    </Td>
+                    <Td>
+                      <InviteeDots invites={rfq.invites} sentAt={rfq.sentAt} />
+                    </Td>
+                    <Td align="right">
+                      <Dwell
+                        since={open?.openedAt ?? null}
+                        owned={open?.ownedByViewer}
+                        settled={settled ? "closed" : null}
+                      />
+                    </Td>
+                    <Td align="right">
+                      {rfq.quoteDeadline ? (
+                        <DateText value={rfq.quoteDeadline} />
+                      ) : (
+                        <span className="text-ink-faint" title="No deadline — nothing to escalate against">
+                          open-ended
+                        </span>
+                      )}
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Ledger>
+          <Pagination range={range} />
+        </>
       )}
     </div>
   );

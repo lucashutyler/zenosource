@@ -19,6 +19,14 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // One document-number space for the whole tenant, shared by POs, RFQs and
+  // price lists — `P-10418`, `Q-10419`, `L-10420`. Deliberately not a
+  // per-entity sequence: one space means the bare number `10418` is
+  // unambiguous read down a phone, which is how suppliers actually use it.
+  // Allocated with a single atomic `UPDATE ... RETURNING` (see
+  // src/lib/document-number.ts), never by counting existing rows.
+  nextDocumentNumber Int @default(10001)
+
   internalUsers  InternalUser[]
   suppliers      Supplier[]
   priceLists     PriceList[]
@@ -27,6 +35,7 @@ model Tenant {
   poSuggestions  POSuggestion[]
   actionItems    ActionItem[]
   locations      Location[]
+  statusEvents   StatusEvent[]
 }
 
 enum InternalUserRole {
@@ -47,6 +56,7 @@ model InternalUser {
 
   cancelledPurchaseOrders PurchaseOrder[]        @relation("POCancelledBy")
   actionItems             ActionItem[]           @relation("ActionItemInternalOwner")
+  resolvedActionItems     ActionItem[]           @relation("ActionItemResolvedBy")
   locations               InternalUserLocation[]
 
   @@unique([tenantId, email])
@@ -100,16 +110,28 @@ model InternalUserLocation {
 // No passwordHash here on purpose: persistent supplier accounts are deferred
 // out of v1 (docs/todo.md#decided) — the scoped action-view link is the entire
 // external auth surface.
+enum SupplierContactStatus {
+  ACTIVE
+  INACTIVE
+}
+
 model SupplierContact {
-  id         String   @id @default(cuid())
+  id         String                @id @default(cuid())
   supplierId String
-  supplier   Supplier @relation(fields: [supplierId], references: [id])
+  supplier   Supplier              @relation(fields: [supplierId], references: [id])
   name       String
   email      String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  // Contacts are never deleted — an INACTIVE contact stops receiving the
+  // chase but keeps its history and its already-resolved action items
+  // intact. Reminders addressed to someone who left the supplier are how a
+  // chase silently stops working.
+  status     SupplierContactStatus @default(ACTIVE)
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
 
-  actionItems ActionItem[] @relation("ActionItemExternalOwner")
+  actionItems     ActionItem[]           @relation("ActionItemExternalOwner")
+  resolvedItems   ActionItem[]           @relation("ActionItemResolvedByContact")
+  changeProposals POLineChangeProposal[]
 
   @@unique([supplierId, email])
 }
@@ -148,6 +170,8 @@ model PriceList {
   id                  String    @id @default(cuid())
   tenantId            String
   tenant              Tenant    @relation(fields: [tenantId], references: [id])
+  // Human-readable document number, `L-10007`. See Tenant.nextDocumentNumber.
+  number              String
   supplierId          String
   supplier            Supplier  @relation(fields: [supplierId], references: [id])
   sourceIntegrationId String?
@@ -159,6 +183,7 @@ model PriceList {
 
   items PriceListItem[]
 
+  @@unique([tenantId, number])
   @@index([tenantId])
   @@index([supplierId])
 }
@@ -209,11 +234,34 @@ model PurchaseOrder {
   id                  String              @id @default(cuid())
   tenantId            String
   tenant              Tenant              @relation(fields: [tenantId], references: [id])
+  // Human-readable document number, `P-10418`. See Tenant.nextDocumentNumber.
+  number              String
   sourceIntegrationId String?
   externalRef         String?
   supplierId          String
   supplier            Supplier            @relation(fields: [supplierId], references: [id])
   status              PurchaseOrderStatus @default(DRAFT)
+
+  // Denormalized sum of line quantity * unitPrice, maintained by every write
+  // path that touches lines (src/lib/po-total.ts). Exists so "rank by dwell
+  // x value" and "$1.4M issued and unacknowledged" are one indexed query
+  // rather than a full line scan — the ordering rule the whole product is
+  // built on can't be a post-fetch sort once a tenant has 900 orders.
+  // 18,4 rather than 14,4: a *line* is Decimal(14,4) x Decimal(14,4), so an
+  // order total can legitimately need more integer digits than either factor.
+  // Sized so it cannot overflow for any in-bounds input — the real bound is
+  // input validation on quantity and price, which Phase 1b Wave 5 adds; until
+  // then the seeded dev data contains a $12T order proving the point.
+  totalValue Decimal @default(0) @db.Decimal(18, 4)
+
+  // Lifecycle timestamps. Redundant with StatusEvent by design: the event
+  // table is the record (and what the possession strip reads), these are the
+  // index the scorecards aggregate over. Both are written by the single
+  // recordStatusChange() helper, so they can't drift.
+  issuedAt       DateTime?
+  acknowledgedAt DateTime?
+  fulfilledAt    DateTime?
+  closedAt       DateTime?
 
   cancelledAt        DateTime?
   cancelledByUserId  String?
@@ -228,14 +276,17 @@ model PurchaseOrder {
 
   lines PurchaseOrderLine[]
 
+  @@unique([tenantId, number])
   @@index([tenantId])
   @@index([supplierId])
+  @@index([tenantId, status])
 }
 
 enum PurchaseOrderLineStatus {
   PENDING_ACKNOWLEDGMENT
   ACKNOWLEDGED
   CHANGE_PROPOSED
+  PARTIALLY_RECEIVED
   FULFILLED
   CLOSED
   CANCELLED
@@ -259,16 +310,67 @@ model PurchaseOrderLine {
   promiseDate     DateTime?
   status          PurchaseOrderLineStatus @default(PENDING_ACKNOWLEDGMENT)
 
+  // The *live* proposal, nulled once the buyer decides. The decision itself
+  // and the values it concerned are preserved in POLineChangeProposal —
+  // without that, accepting a proposal destroyed the only evidence it ever
+  // happened, and change-proposal rate is a supplier-scorecard metric.
   proposedQuantity          Decimal?  @db.Decimal(14, 4)
   proposedUnitPrice         Decimal?  @db.Decimal(14, 4)
   proposedDate              DateTime?
   proposedBySupplierContact String?
   proposedAt                DateTime?
 
+  // Receipt, recorded per line by the buyer; the header rolls up to
+  // FULFILLED once every line is terminal.
+  receivedAt       DateTime?
+  receivedQuantity Decimal?  @db.Decimal(14, 4)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  changeProposals POLineChangeProposal[]
+
   @@index([purchaseOrderId])
+}
+
+enum ChangeProposalOutcome {
+  PENDING
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+}
+
+// Immutable history of supplier-proposed line changes and what the buyer did
+// about them. `PurchaseOrderLine.proposed*` holds only the open proposal;
+// this holds every one that was ever made, so "change-proposal rate" and
+// "average date slip" (docs/product.md's supplier scorecard) are answerable
+// after the fact.
+model POLineChangeProposal {
+  id                  String            @id @default(cuid())
+  purchaseOrderLineId String
+  purchaseOrderLine   PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id])
+
+  // Values as they stood when the proposal was made, so a diff is
+  // reconstructible without replaying the whole line history.
+  previousQuantity  Decimal   @db.Decimal(14, 4)
+  previousUnitPrice Decimal   @db.Decimal(14, 4)
+  previousDate      DateTime?
+
+  proposedQuantity  Decimal   @db.Decimal(14, 4)
+  proposedUnitPrice Decimal   @db.Decimal(14, 4)
+  proposedDate      DateTime?
+
+  proposedByContactId String?
+  proposedByContact   SupplierContact? @relation(fields: [proposedByContactId], references: [id])
+  proposedByName      String
+  proposedAt          DateTime         @default(now())
+
+  outcome         ChangeProposalOutcome @default(PENDING)
+  decidedAt       DateTime?
+  decidedByUserId String?
+  decisionNote    String?
+
+  @@index([purchaseOrderLineId])
 }
 
 enum RFQStatus {
@@ -280,12 +382,23 @@ enum RFQStatus {
 }
 
 model RFQ {
-  id        String    @id @default(cuid())
-  tenantId  String
-  tenant    Tenant    @relation(fields: [tenantId], references: [id])
-  status    RFQStatus @default(DRAFT)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id       String    @id @default(cuid())
+  tenantId String
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  // Human-readable document number, `Q-10422`. See Tenant.nextDocumentNumber.
+  number   String
+  status   RFQStatus @default(DRAFT)
+
+  // Without a deadline the response window is unbounded and there is nothing
+  // to escalate against — the chase has no terminal branch.
+  quoteDeadline DateTime?
+
+  sentAt    DateTime?
+  awardedAt DateTime?
+  closedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Resolves the docs/data-model.md open question of how the winning quote
   // is recorded: explicit FK, set only on award. Whether award auto-creates
@@ -298,7 +411,9 @@ model RFQ {
   invites RFQSupplierInvite[]
   quotes  RFQQuote[]
 
+  @@unique([tenantId, number])
   @@index([tenantId])
+  @@index([tenantId, status])
 }
 
 model RFQLine {
@@ -327,14 +442,19 @@ enum RFQSupplierInviteStatus {
 }
 
 model RFQSupplierInvite {
-  id         String                  @id @default(cuid())
-  rfqId      String
-  rfq        RFQ                     @relation(fields: [rfqId], references: [id])
-  supplierId String
-  supplier   Supplier                @relation(fields: [supplierId], references: [id])
-  status     RFQSupplierInviteStatus @default(INVITED)
-  createdAt  DateTime                @default(now())
-  updatedAt  DateTime                @updatedAt
+  id          String                  @id @default(cuid())
+  rfqId       String
+  rfq         RFQ                     @relation(fields: [rfqId], references: [id])
+  supplierId  String
+  supplier    Supplier                @relation(fields: [supplierId], references: [id])
+  status      RFQSupplierInviteStatus @default(INVITED)
+  // Per-invitee response timing — the RFQ list draws one square per invitee
+  // at *that invitee's* own dwell, which a single RFQ-level timestamp can't
+  // express. Also feeds the supplier scorecard's RFQ response rate.
+  respondedAt DateTime?
+  declinedAt  DateTime?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
 
   @@unique([rfqId, supplierId])
 }
@@ -412,13 +532,34 @@ enum ActionItemSubjectType {
   PO_SUGGESTION
 }
 
-// Illustrative, not exhaustive — see docs/data-model.md#actionitem.
+// Every non-terminal state of a PO or RFQ maps to exactly one of these, and
+// each one names who owes what. A state with no entry here is a modeling bug
+// (docs/product.md) — the audit in src/lib/lifecycle.ts is the executable
+// version of that claim. See docs/data-model.md#actionitem.
 enum ActionItemType {
+  // Buyer owes: a draft nobody has issued is work sitting still.
+  PO_ISSUE_DRAFT
+  // Supplier owes: acknowledge an issued PO.
   PO_ACKNOWLEDGE
+  // Buyer owes: decide on a supplier's proposed line change.
   PO_REVIEW_CHANGE_PROPOSAL
+  // Buyer owes: respond to a supplier's rejection (revise, or cancel).
   PO_REVIEW_REJECTION
+  // Supplier owes: deliver what they acknowledged. Open from acknowledgment
+  // until every line is received — this is what "they owe 11" counts.
+  PO_DELIVER
+  // Buyer owes: close out a fully-received PO.
+  PO_CLOSE
+  // Buyer owes: send a drafted RFQ to its invited suppliers.
+  RFQ_SEND_DRAFT
+  // Supplier owes: submit a quote (one per invited contact).
   RFQ_SUBMIT_QUOTE
+  // Buyer owes: award or close an RFQ that has quotes in.
   RFQ_AWARD_DECISION
+  // Buyer owes: raise the PO an award implies. Awarding does not create one
+  // automatically (docs/data-model.md), so without this the winning quote
+  // silently goes nowhere.
+  RFQ_RAISE_PO_FROM_AWARD
   PO_SUGGESTION_REVIEW
 }
 
@@ -457,9 +598,69 @@ model ActionItem {
   openedAt   DateTime  @default(now())
   resolvedAt DateTime?
 
+  // Who actually closed it. Attribution the buyer scorecard needs (resolution
+  // latency by user) and the supplier receipt reads ("Sam Supplier confirmed
+  // ..."), neither of which is recoverable from ownership alone — an OWNER
+  // can resolve an item assigned to someone else.
+  resolvedByInternalUserId String?
+  resolvedByInternalUser   InternalUser?    @relation("ActionItemResolvedBy", fields: [resolvedByInternalUserId], references: [id])
+  resolvedByContactId      String?
+  resolvedByContact        SupplierContact? @relation("ActionItemResolvedByContact", fields: [resolvedByContactId], references: [id])
+
+  // Chase state. `Chase all N` aggregates by recipient and needs a
+  // server-side cooldown — the alternative is a per-row nudge button aimed
+  // at the most-distributed surface we own. reminderCount is shown to the
+  // buyer only, never to the supplier.
+  lastRemindedAt DateTime?
+  reminderCount  Int       @default(0)
+
   @@index([tenantId])
   @@index([internalOwnerId])
   @@index([externalOwnerId])
+  @@index([tenantId, status, ownerType])
+  @@index([subjectType, subjectId, status])
+}
+
+enum StatusEventSubjectType {
+  PURCHASE_ORDER
+  PURCHASE_ORDER_LINE
+  RFQ
+}
+
+enum StatusEventActorType {
+  INTERNAL_USER
+  EXTERNAL_USER
+  SYSTEM
+}
+
+// The transition log docs/product.md promises the scorecards are "built on".
+// Append-only: one row per state change, whoever caused it. Two things need
+// it that nothing else can supply — the possession strip (contiguous
+// [draft][you][them] segments across an order's whole life) and any metric
+// about *how long* a state lasted rather than which state something is in.
+// Written only via recordStatusChange(), which also updates the matching
+// denormalized timestamp on the entity.
+model StatusEvent {
+  id          String                 @id @default(cuid())
+  tenantId    String
+  tenant      Tenant                 @relation(fields: [tenantId], references: [id])
+  subjectType StatusEventSubjectType
+  subjectId   String
+  fromStatus  String?
+  toStatus    String
+
+  actorType      StatusEventActorType
+  actorUserId    String?
+  actorContactId String?
+  // Denormalized display name, captured at write time: a contact can be
+  // deactivated or a user removed, and the history still has to read.
+  actorLabel     String?
+
+  note       String?
+  occurredAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([subjectType, subjectId, occurredAt])
 }
 
 // Outbound email captured by the dev mailbox instead of being delivered —
@@ -468,11 +669,23 @@ model ActionItem {
 // which 404s once a provider is set. Deliberately not tenant-scoped: this
 // simulates the mail server, not a product entity.
 model CapturedEmail {
-  id        String   @id @default(cuid())
-  toEmail   String
-  subject   String
-  textBody  String
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  toEmail     String
+  // `Acme Manufacturing via ZenoSource` — the buyer's name first, ours
+  // second. Suppliers ignore no-reply automation and answer humans, and the
+  // From line is the first thing they read.
+  fromName    String   @default("ZenoSource")
+  fromEmail   String   @default("notifications@zenosource.example")
+  // The named buyer, so hitting reply reaches a person. Two header fields;
+  // the highest leverage-to-effort item in the whole design review.
+  replyTo     String?
+  subject     String
+  // The line under the subject in every mail client. Unset, clients fill it
+  // with whatever the first line of the body happens to be.
+  previewText String?
+  textBody    String
+  htmlBody    String?
+  createdAt   DateTime @default(now())
 
   @@index([createdAt])
 }

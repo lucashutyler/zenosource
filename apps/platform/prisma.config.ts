@@ -10,5 +10,14 @@ export default defineConfig({
   },
   datasource: {
     url: process.env["DATABASE_URL"],
+    // Only used by `prisma migrate diff --from-migrations` (which replays the
+    // migrations directory into a throwaway database to compare against the
+    // schema) and by `migrate dev`. Never touched at runtime. Defaults to a
+    // sibling `zenosource_shadow` database on the same local Postgres, so
+    // generating a migration doesn't need extra setup — see
+    // ../CLAUDE.md#migrations.
+    shadowDatabaseUrl:
+      process.env["SHADOW_DATABASE_URL"] ??
+      process.env["DATABASE_URL"]?.replace(/\/[^/?]+(\?|$)/, "/zenosource_shadow$1"),
   },
 });

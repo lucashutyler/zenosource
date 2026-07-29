@@ -9,12 +9,14 @@ import type { PrismaClient } from "@/generated/prisma/client";
 // one place that ordering needs to live now instead of copy-pasted per file.
 export async function wipeTestDb(db: PrismaClient) {
   await db.capturedEmail.deleteMany();
+  await db.statusEvent.deleteMany();
   await db.actionItem.deleteMany();
   await db.rFQQuoteLine.deleteMany();
   await db.rFQQuote.deleteMany();
   await db.rFQSupplierInvite.deleteMany();
   await db.rFQLine.deleteMany();
   await db.rFQ.deleteMany();
+  await db.pOLineChangeProposal.deleteMany();
   await db.purchaseOrderLine.deleteMany();
   await db.purchaseOrder.deleteMany();
   await db.supplierContact.deleteMany();

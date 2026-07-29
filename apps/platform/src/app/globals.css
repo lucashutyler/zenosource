@@ -1,26 +1,289 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ==========================================================================
+   The spine.
+
+   One rule, and everything below is its consequence:
+
+       Saturation is reserved for time and ownership.
+       Nothing else in the product gets a hue.
+
+   Status badges don't get colour. Brand doesn't get colour. Buttons don't
+   get colour. What gets colour is how long something has been waiting and
+   whose court it's sitting in — because that is the only thing on screen a
+   buyer needs to act on, and every hue spent elsewhere is stolen from it.
+
+   The rule is enforceable in review with a grep: any `text-red-`, `bg-indigo-`
+   or `text-green-` in this app is a bug. Colour arrives through the `age-*`,
+   `court-*` and `settled` tokens or not at all.
+
+   It is also redundantly encoded. Every step of the age ramp raises stroke
+   weight alongside hue, so the ramp still reads in greyscale, in print, and
+   for the ~8% of men with a red-green deficiency — the population that
+   overlaps heavily with the shop floors our suppliers work on.
+   ========================================================================== */
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+
+  --color-age-0: var(--age-0);
+  --color-age-1: var(--age-1);
+  --color-age-2: var(--age-2);
+  --color-age-3: var(--age-3);
+  --color-age-4: var(--age-4);
+
+  --color-court-them: var(--court-them);
+  --color-court-them-soft: var(--court-them-soft);
+  --color-settled: var(--settled);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+:root {
+  /* Warm paper, not white. A procurement ledger is a paper object; #FFFFFF
+     is a screenshot of a web app. The warmth also lets the oxidation ramp
+     sit on it without either end looking like an error state. */
+  --paper: #fbfaf8;
+  --paper-raised: #ffffff;
+  --ink: #1a1817;
+  --ink-soft: #55504b;
+  --ink-faint: #7d766e;
+  --rule: #e4e0d9;
+  --rule-strong: #cbc5bb;
+
+  /* The oxidation ramp: fresh steel through to oxblood. Not a red gradient —
+     metal ageing, which is what a late order actually resembles to the person
+     whose line is stopped. Every step clears 4.5:1 against --paper, because
+     the whole point is that it's readable, not decorative. */
+  --age-0: #666a6d; /* steel      — today / 1d */
+  --age-1: #7a6a4f; /* ochre      — 2–3d      */
+  --age-2: #94631f; /* bronze     — 4–7d      */
+  --age-3: #9a431c; /* rust       — 8–14d     */
+  --age-4: #8e2c1e; /* oxblood    — 15d+      */
+
+  /* Ownership. Cobalt is deliberately nothing like the ramp: "waiting on
+     them" is a different *kind* of fact from "waiting 11 days", and the eye
+     should never have to work out which axis a colour is on. */
+  --court-them: #1b4fb8;
+  --court-them-soft: #eef2fc;
+  /* Verdigris — aged copper. Resolved work, present but never loud: nobody
+     needs to be drawn to what's already done. */
+  --settled: #3d7a6b;
+
+  color-scheme: light;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --paper: #151312;
+    --paper-raised: #1e1b19;
+    --ink: #f2efea;
+    --ink-soft: #b6afa6;
+    --ink-faint: #8a8279;
+    --rule: #302c29;
+    --rule-strong: #443e39;
+
+    --age-0: #9a9c9f;
+    --age-1: #c4a87a;
+    --age-2: #d99a45;
+    --age-3: #e07a4c;
+    --age-4: #e86c5a;
+
+    --court-them: #7fa8f0;
+    --court-them-soft: #1a2540;
+    --settled: #6fb9a3;
+
+    /* Declared, at last. Without this the browser renders `<select>` popups
+       and date pickers in light chrome inside our dark fields — the audit
+       found white dropdown panels on every form in the app. */
+    color-scheme: dark;
   }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  /* No `font-family` override here. The `create-next-app` boilerplate this
+     replaces set `Arial, Helvetica, sans-serif`, which quietly beat the Geist
+     webfonts layout.tsx downloads on every single page load — the app paid
+     for two font families and rendered neither. Tailwind's preflight points
+     `font-sans` at `--font-geist-sans` via @theme above. */
+}
+
+/* Tabular numerals everywhere a number is compared to another number. A
+   ledger whose digits don't line up is a list. */
+.tnum,
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Focus ---------------------------------------------------------------
+   One visible focus ring, on everything, including Windows High Contrast
+   mode where custom colours are discarded and `outline` is all that's left. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--court-them);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (forced-colors: active) {
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 3px solid Highlight;
+  }
+}
+
+/* Skip link — present in the DOM, out of the way until focused. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+}
+.skip-link:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--paper-raised);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+}
+
+/* --- The age ramp --------------------------------------------------------
+   `.age-N` is the full ramp: hue plus weight, for items assigned to the
+   person reading the screen. `.age-N.muted` is the entity-list variant.
+
+   The distinction is a hard law, not a style preference. Most of a real
+   tenant is at rest — 900 rows closed, 40 in flight — and applying the full
+   ramp to entity lists means a customer's first login is a wall of oxblood
+   that means nothing and teaches them to ignore the colour permanently. The
+   full ramp is bounded by human capacity: it only ever applies to the items
+   one person owes. */
+.age-0 {
+  color: var(--age-0);
+  font-weight: 400;
+}
+.age-1 {
+  color: var(--age-1);
+  font-weight: 500;
+}
+.age-2 {
+  color: var(--age-2);
+  font-weight: 600;
+}
+.age-3 {
+  color: var(--age-3);
+  font-weight: 650;
+}
+.age-4 {
+  color: var(--age-4);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.age-0.muted,
+.age-1.muted,
+.age-2.muted,
+.age-3.muted,
+.age-4.muted {
+  font-weight: 400;
+  opacity: 0.82;
+}
+
+/* At-rest work gets no clock at all. Not `age-0`, not `0d` — blank. A row
+   with nothing open is not "fresh", it's finished, and drawing a zero on it
+   is the same lie as drawing a hot one. */
+.at-rest {
+  color: var(--ink-faint);
+  font-weight: 400;
+}
+
+/* A non-terminal state that minted no action item. This is the modeling bug
+   docs/product.md names, rendered: hatched, uncomfortable, and impossible to
+   mistake for a designed state. If you are seeing this in the product, a
+   transition forgot to open an item. */
+.unowned {
+  color: var(--ink-faint);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 3px,
+    var(--rule-strong) 3px,
+    var(--rule-strong) 4px
+  );
+}
+
+/* --- Print ---------------------------------------------------------------
+   A purchase order is a document that gets printed, signed, and pinned to a
+   shop-floor wall. Neither competitor produces a printable artifact in any
+   form. */
+@media print {
+  :root {
+    --paper: #ffffff;
+    --paper-raised: #ffffff;
+    --ink: #000000;
+    --ink-soft: #333333;
+    --ink-faint: #555555;
+    --rule: #cccccc;
+    --rule-strong: #666666;
+    color-scheme: light;
+  }
+
+  body {
+    background: #fff;
+    color: #000;
+    font-size: 10pt;
+  }
+
+  /* Chrome is not part of the document. */
+  .no-print,
+  nav[aria-label="Primary"],
+  header.app-header,
+  aside {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+  }
+
+  /* A line item split across a page break is how a quantity gets misread. */
+  tr,
+  .print-keep {
+    break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  a[href]::after {
+    content: "";
+  }
+
+  .print-only {
+    display: revert !important;
+  }
+}
+
+.print-only {
+  display: none;
+}
+
+/* --- Motion --------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

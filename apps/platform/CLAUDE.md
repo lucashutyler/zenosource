@@ -31,22 +31,51 @@ This is deliberately the credentials-only "internal user" placeholder from [docs
 ## Local dev
 
 ```bash
-docker compose up -d        # Postgres on localhost:5434 (5432 and 5433 were already taken by other local Postgres instances)
+docker compose up -d         # Postgres on localhost:5434 (5432 and 5433 were already taken by other local Postgres instances)
 npm install
-npx prisma db push          # sync schema — see the migration-history note below before reaching for `migrate dev` instead
-npm run seed                 # demo tenant, 5 suppliers, ~24 POs, 5 RFQs, 2 price lists, a few open action items
+npx prisma migrate deploy    # apply the migration history — not `db push`, see Migrations below
+npm run seed                 # demo tenant, 5 suppliers, ~130 POs and 14 RFQs across ~6 months of backdated history
 npm run dev                  # http://localhost:3000
 ```
 
 Seeded login is printed by `npm run seed`.
 
-**Email in dev**: with no `EMAIL_PROVIDER` set (the default), outbound email — currently just the reminder digests — is captured to the `CapturedEmail` table instead of being delivered. Browse it at `/dashboard/emails` ("Emails (dev)" in the nav): the `/a/{token}` action links inside are clickable and the reminder job can be run from the page, so the whole external no-login flow works without a provider. Setting `EMAIL_PROVIDER` disables the page and the capture path (`src/lib/email/sender.ts`).
+**If pages 500 after a schema change, check for a stale `next dev`.** A long-running dev server holds the Prisma client it started with, so once you change the schema its queries reference columns the database no longer has — and every affected route throws while a freshly started server on another port is fine. This has been mistaken for a real outage twice. Restart the server, don't debug the query.
 
-**Migration-history gap, worth knowing about**: four schema changes (`Location`, `RFQ.awardedQuoteId`, the `CapturedEmail` table, and the `SupplierContact.passwordHash` drop) were applied to the dev/test databases via `prisma db push` instead of a real migration, because `prisma migrate dev` refuses to run non-interactively when it needs to confirm a warning — a real constraint in an agent-driven session, not necessarily in a normal terminal. `prisma/migrations/` only has the one `20260728124103_init` migration, so it doesn't fully capture the current schema. That's fine for `db push`-based local/CI setup (see below), but `prisma migrate deploy` — the non-interactive command meant for a real deploy — would miss those changes. Generate proper migration files for the gap (a `prisma migrate diff` against the init migration enumerates it exactly) before this goes anywhere near a production database.
+**Email in dev**: with no `EMAIL_PROVIDER` set (the default), outbound email is captured to the `CapturedEmail` table instead of being delivered. Browse it at `/dashboard/emails` ("Emails (dev)" in the nav): the `/a/{token}` action links inside are clickable, the HTML body renders in a 390px phone frame, and the chase can be run from the page — so the whole external no-login flow works without a provider. Setting `EMAIL_PROVIDER` disables the page and the capture path (`src/lib/email/sender.ts`).
+
+## Migrations
+
+`prisma/migrations/` is the source of truth, and local, CI and E2E all apply it with `prisma migrate deploy`. That's deliberate: Phase 1 shipped four schema changes that only ever existed as `db push` (`Location`, `RFQ.awardedQuoteId`, `CapturedEmail`, the `SupplierContact.passwordHash` drop) and nothing caught it, because nothing ever ran the migrations. Two things prevent a repeat:
+
+- Every test run — E2E locally and both CI jobs — deploys the migrations rather than pushing the schema.
+- `typecheck-and-lint` runs `prisma migrate diff --from-migrations --to-schema --exit-code`, which fails the build if the migrations directory doesn't fully reproduce `schema.prisma`.
+
+To add a migration without an interactive prompt (`prisma migrate dev` refuses to run non-interactively when it needs to confirm anything):
+
+```bash
+npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script -o /tmp/next.sql
+```
+
+then move the SQL into `prisma/migrations/<timestamp>_<name>/migration.sql`, hand-edit anything that needs a backfill (a new `NOT NULL` column on a populated table has to be added nullable, filled, then constrained — see `20260729093000_reporting_history_and_document_numbers`), and `npx prisma migrate deploy`. The shadow database this needs is configured in `prisma.config.ts` and defaults to a sibling `zenosource_shadow` on the same local Postgres.
 
 ## Testing
 
 - **Unit/integration**: Vitest (`npm test`, `npm run test:watch`, `npm run test:ui`). Runs against a dedicated `zenosource_test` database (not the dev one) — see `.env.test` and `vitest.setup.ts`. `src/lib/session.test.ts` mocks `next/headers` to test the real exported functions without a Next.js request context; most other files (`src/lib/reminders.test.ts`, `src/app/actions/purchase-orders.test.ts`, `src/lib/access.test.ts`) run against the real test DB and start each test from a clean slate via the shared `wipeTestDb()` helper (`src/lib/testing/wipe-test-db.ts`) — it has to stay in sync with `prisma/seed.ts`'s deletion order, since the test DB is shared with every other Vitest file *and* the E2E suite below, so a partial wipe can hit an FK constraint from data another suite left behind. (`src/lib/email/sender.test.ts` is the deliberate exception — it uses per-run-unique fixture values instead of wiping, specifically so it stays safe to re-run in isolation via `test:watch`.)
-- **End-to-end**: Playwright (`npm run test:e2e`, `npm run test:e2e:ui`). Also runs against `zenosource_test` — `e2e/global-setup.ts` pushes the schema and reseeds before every run, so specs always start from known data. The E2E server runs on port 3100 with its own build directory (`E2E_DIST_DIR=.next-e2e` in `next.config.ts`) specifically so it can run *alongside* a manually-running `npm run dev` without Next's project-directory dev lock killing one of them. `e2e/helpers/db.ts` uses raw `pg` queries rather than the generated Prisma client — Playwright's own TS transform doesn't handle the generated client's `import.meta.url` usage (tsx and Next's bundler both do fine; this is specific to Playwright's pipeline).
+- **End-to-end**: Playwright (`npm run test:e2e`, `npm run test:e2e:ui`). Also runs against `zenosource_test` — `e2e/global-setup.ts` deploys the migrations and reseeds before every run, so specs always start from known data. The E2E server runs on port 3100 with its own build directory (`E2E_DIST_DIR=.next-e2e` in `next.config.ts`) specifically so it can run *alongside* a manually-running `npm run dev` without Next's project-directory dev lock killing one of them. `e2e/helpers/db.ts` uses raw `pg` queries rather than the generated Prisma client — Playwright's own TS transform doesn't handle the generated client's `import.meta.url` usage (tsx and Next's bundler both do fine; this is specific to Playwright's pipeline).
 - **CI**: `.github/workflows/platform-ci.yml` runs typecheck/lint, unit tests, and E2E on push/PR, each E2E/unit job with its own Postgres service container — so this class of shared-test-DB interference can't happen in CI even though it's a real local concern.
 - **Add tests with the change that needs them**, not as a follow-up — a race-condition fix without a test proving the race is closed isn't done. When you build a new server action or lifecycle transition, prefer extending the existing integration-test pattern (a real test-DB write, not a mocked Prisma client) over a pure unit test with mocks — this app's server actions are thin enough that mocking them tends to test the mock, not the behavior.
+- **`src/lib/lifecycle.test.ts` is the executable form of the product's central claim.** It asserts that every PO and RFQ status either mints an action item or appears on `UNCHASED_STATUSES` with a written reason, and that the side who owes each action agrees with whose court the status is in. A new status added to the schema without a decision about who owes what fails there rather than shipping as a silent dead end.
+- **E2E fixtures create their own supplier and contact** (`e2e/helpers/db.ts`). Sharing a seeded contact couples specs through the chase's 24-hour per-item cooldown, which then suppresses a later spec's email — a failure that looks like a mailbox bug and is actually the cooldown working.
+
+## Design
+
+The visual system is one rule, stated at the top of `src/app/globals.css`: **saturation is reserved for time and ownership; nothing else in the product gets a hue.** Status words, brand and buttons are ink on warm paper. Colour arrives only through the five-step age ramp (`age-0` steel → `age-4` oxblood), the cobalt `court-them`, and verdigris for settled work — and the ramp encodes each step in stroke weight as well as hue, so it survives greyscale, print and colour-blindness.
+
+It's enforceable by grep: any `text-red-`, `bg-indigo-` or `text-green-` in this app is a bug. Practical consequences worth knowing before editing a screen:
+
+- Formatting goes through `src/lib/format.ts`. Nothing else should call `toLocaleDateString`, `toLocaleString` or `Intl.*` — dates are calendar dates stored at UTC midnight and *must* be read back in UTC, which is the bug that previously rendered every user-entered date a day early at thirteen call sites.
+- Every user-visible name for a state or an action comes from `src/lib/lifecycle.ts`.
+- Forms return `FormState` (`src/lib/form-state.ts`) and echo the submitted values back, so a validation failure costs a keystroke rather than a re-entry.
+- `SubmitButton` reads its pending state from `useFormStatus()` rather than a prop, because a prop you can forget gets forgotten on exactly the irreversible actions that are written last.
+- Irreversible actions go behind `ConfirmSubmit`, whose body names the consequence *including what doesn't happen*. Colour lives in the confirm, never on the trigger.

@@ -4,6 +4,18 @@ export type EmailMessage = {
   to: string;
   subject: string;
   text: string;
+  html?: string;
+  /**
+   * `Acme Manufacturing via ZenoSource`. The buyer's name leads because the
+   * supplier has a relationship with them and none with us — mail from an
+   * unrecognized vendor is what gets ignored.
+   */
+  fromName?: string;
+  fromEmail?: string;
+  /** A real person at the buyer. Suppliers reply to humans. */
+  replyTo?: string;
+  /** The line clients render under the subject. */
+  previewText?: string;
 };
 
 export interface EmailSender {
@@ -25,7 +37,16 @@ export class MailboxEmailSender implements EmailSender {
 
   async send(message: EmailMessage): Promise<void> {
     await this.db.capturedEmail.create({
-      data: { toEmail: message.to, subject: message.subject, textBody: message.text },
+      data: {
+        toEmail: message.to,
+        subject: message.subject,
+        textBody: message.text,
+        htmlBody: message.html ?? null,
+        fromName: message.fromName ?? "ZenoSource",
+        fromEmail: message.fromEmail ?? "notifications@zenosource.example",
+        replyTo: message.replyTo ?? null,
+        previewText: message.previewText ?? null,
+      },
     });
   }
 }

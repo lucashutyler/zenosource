@@ -35,7 +35,36 @@ Both competitors already run on the same thesis this project is built on: **narr
 - **Price Lists with price breaks** — per-supplier, per-item pricing with quantity-threshold breaks and effective dates.
 - **PO Suggestions** — integration-gated (see [docs/architecture.md](architecture.md)); v1 sources these from a connected ERP's own MRP output (Epicor) rather than generating them internally.
 - **Supplier collaboration** — external user accounts scoped to the POs/RFQs they're invited into, acknowledgment/confirmation flows, status visibility.
-- **Reporting** — buyer scorecards, supplier scorecards, and other operational reporting surfaces, built on top of the action-item/state-transition history rather than as a bolted-on analytics layer. Expect this list to grow past these two.
+- **Reporting** — buyer scorecards, supplier scorecards, and other operational reporting surfaces, built on top of the action-item/state-transition history rather than as a bolted-on analytics layer. Expect this list to grow past these two. The v1 metric list is pinned below rather than left to a report builder.
+
+### The scorecard metrics, pinned
+
+Two fixed scorecards, one fixed 90-day window, one fixed metric list — no report builder and no metric picker. That follows directly from the philosophy below: a number two people can define differently is a number neither of them will act on, and reporting is where that discipline is hardest and matters most. Everything here is derived from the fixed state machines and the transition log; none of it needs configuration, and none of it can be backfilled, which is why the history is written at the moment of each transition.
+
+**Supplier scorecard** — one row per supplier, ranked by what they're currently holding:
+
+| Metric | Derived from |
+|---|---|
+| Acknowledgment latency (median) | `issuedAt` → `acknowledgedAt` |
+| Orders issued / acknowledged / rejected | PO status + lifecycle timestamps |
+| On-time delivery % | line `receivedAt` vs `promiseDate`, falling back to `needByDate` when they never promised — otherwise declining to commit scores perfectly |
+| Change-proposal rate, and average date slip | `POLineChangeProposal` history |
+| RFQ response rate and quote turnaround | `RFQSupplierInvite.respondedAt` / `declinedAt` vs `RFQ.sentAt` |
+| Open items and the age of the oldest | open `ActionItem`s owned by their contacts |
+| Value currently held | `PurchaseOrder.totalValue` across their unanswered orders |
+| Answered without a second chase % | `ActionItem.reminderCount` on resolved items |
+
+**Buyer scorecard** — one row per internal user. Deliberately not a productivity scoreboard: the only actionable number on it is the age of the oldest thing somebody is sitting on.
+
+| Metric | Derived from |
+|---|---|
+| Resolution latency (median) | `ActionItem.openedAt` → `resolvedAt` |
+| Resolved / open counts, oldest open | `ActionItem` |
+| Draft-to-issue latency (median) | `StatusEvent` DRAFT → ISSUED, attributed to the actor |
+
+Plus one tenant-level figure at the top of the page, because it's the sentence a customer repeats to their own management: **"84% of your suppliers responded without a second chase."** Computable from `ActionItem` history alone — no ML, no new tables.
+
+A metric with too little history renders as an em dash, never as a zero.
 
 ### Explicit non-goals for v1
 

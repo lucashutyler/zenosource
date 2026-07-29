@@ -1,7 +1,7 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
-import { rfqDisplayNumber } from "@/lib/display";
+import type { Prisma } from "@/generated/prisma/client";
 import type {
   ActionItemOwnerType,
   ActionItemSubjectType,
@@ -12,19 +12,48 @@ function generateAccessToken() {
   return randomBytes(32).toString("hex");
 }
 
+// A short, speakable code for the same grant — `7QK2-M4RD`.
+//
+// The 64-hex token stays in the href and is the only thing that authorizes
+// anything. This is what a human reads: it goes in the email body and on the
+// action view so a supplier can find the right message on the phone, or read
+// it to a colleague. The audit found the raw token rendered visibly, which
+// looks like malware, cannot be read aloud, and was single-handedly
+// responsible for the external email view overflowing a phone by 83%.
+//
+// Crockford's alphabet minus the characters that get misheard or mistyped
+// (I/L/O/U, and 0/1 with them), so "seven-Q-K-two" survives a bad line.
+const CLAIM_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+export function claimCodeFor(accessToken: string): string {
+  // Derived, not stored: same token always yields the same code, and a code
+  // alone can't be reversed into a token because it's a lossy projection of
+  // one — 8 characters of a 64-hex secret.
+  let code = "";
+  for (let i = 0; i < 8; i++) {
+    const byte = parseInt(accessToken.slice(i * 2, i * 2 + 2), 16) || 0;
+    code += CLAIM_ALPHABET[byte % CLAIM_ALPHABET.length];
+  }
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
+}
+
 // Every state-bearing entity resolves to at most one open ActionItem — see
 // docs/architecture.md#action-items--reminders. Callers should only ever
 // create one through a state transition, never freestanding.
-export async function createActionItem(params: {
-  tenantId: string;
-  subjectType: ActionItemSubjectType;
-  subjectId: string;
-  actionType: ActionItemType;
-  ownerType: ActionItemOwnerType;
-  internalOwnerId?: string;
-  externalOwnerId?: string;
-}) {
-  return db.actionItem.create({
+export async function createActionItem(
+  params: {
+    tenantId: string;
+    subjectType: ActionItemSubjectType;
+    subjectId: string;
+    actionType: ActionItemType;
+    ownerType: ActionItemOwnerType;
+    internalOwnerId?: string;
+    externalOwnerId?: string;
+  },
+  tx?: Prisma.TransactionClient
+) {
+  const client = tx ?? db;
+  return client.actionItem.create({
     data: {
       tenantId: params.tenantId,
       subjectType: params.subjectType,
@@ -52,10 +81,18 @@ export async function resolveActionItem(id: string) {
 // no-login link can be opened twice. Whoever's write actually flips
 // status OPEN -> RESOLVED wins; everyone else gets count 0 and must treat
 // the action as already handled, not retry the underlying mutation.
-export async function tryResolveActionItem(id: string): Promise<boolean> {
+export async function tryResolveActionItem(
+  id: string,
+  resolvedBy?: { internalUserId?: string; contactId?: string }
+): Promise<boolean> {
   const result = await db.actionItem.updateMany({
     where: { id, status: "OPEN" },
-    data: { status: "RESOLVED", resolvedAt: new Date() },
+    data: {
+      status: "RESOLVED",
+      resolvedAt: new Date(),
+      resolvedByInternalUserId: resolvedBy?.internalUserId ?? null,
+      resolvedByContactId: resolvedBy?.contactId ?? null,
+    },
   });
   return result.count > 0;
 }
@@ -68,13 +105,33 @@ export async function tryResolveActionItem(id: string): Promise<boolean> {
 // separate call per line id.
 export async function resolveOpenActionItemsFor(
   subjectType: ActionItemSubjectType,
-  subjectId: string | string[]
+  subjectId: string | string[],
+  options?: {
+    /** Narrow to one kind, e.g. resolve only PO_ISSUE_DRAFT on issue. */
+    actionType?: ActionItemType | ActionItemType[];
+    resolvedBy?: { internalUserId?: string; contactId?: string };
+    tx?: Prisma.TransactionClient;
+  }
 ) {
   const ids = Array.isArray(subjectId) ? subjectId : [subjectId];
   if (ids.length === 0) return { count: 0 };
-  return db.actionItem.updateMany({
-    where: { subjectType, subjectId: { in: ids }, status: "OPEN" },
-    data: { status: "RESOLVED", resolvedAt: new Date() },
+  const client = options?.tx ?? db;
+  const actionType = options?.actionType;
+  return client.actionItem.updateMany({
+    where: {
+      subjectType,
+      subjectId: { in: ids },
+      status: "OPEN",
+      ...(actionType
+        ? { actionType: Array.isArray(actionType) ? { in: actionType } : actionType }
+        : {}),
+    },
+    data: {
+      status: "RESOLVED",
+      resolvedAt: new Date(),
+      resolvedByInternalUserId: options?.resolvedBy?.internalUserId ?? null,
+      resolvedByContactId: options?.resolvedBy?.contactId ?? null,
+    },
   });
 }
 
@@ -91,20 +148,35 @@ export function listOpenActionItemsForInternalUser(internalUserId: string) {
   });
 }
 
+/**
+ * Every open item the supplier side owes this tenant. The "they owe 11" half
+ * of the dashboard — a view that did not exist anywhere in the product, and
+ * is the answer to the question the product exists to answer.
+ */
+export function listOpenExternalActionItems(tenantId: string) {
+  return db.actionItem.findMany({
+    where: { tenantId, status: "OPEN", ownerType: "EXTERNAL_USER" },
+    include: { externalOwner: { include: { supplier: true } } },
+    orderBy: { openedAt: "asc" },
+  });
+}
+
 // What to show for an action item and where clicking it should take you.
 // `subjectId` isn't a real FK (ActionItem is deliberately polymorphic — see
 // docs/data-model.md#actionitem), so resolving "which work item is this"
 // takes an extra lookup per subject type; all batched here rather than
-// N+1'd per item. `identifier`/`detail` exist so a list of action items can
-// say exactly which PO/RFQ/line each one concerns instead of just its type —
-// PurchaseOrder has no human-readable number yet (docs/todo.md), so
-// `identifier` falls back to the supplier name, which is unique enough to
-// tell items apart in the common case.
+// N+1'd per item.
 export type ActionItemContext = {
   href: string | null;
   entityLabel: string;
+  /** The document number — `P-10418`. */
   identifier: string | null;
+  /** Who the other party is, for the whose-court read. */
+  supplierName: string | null;
   detail: string | null;
+  /** Order value, for the dwell x value ranking. */
+  value: number | null;
+  needByDate: Date | null;
 };
 
 export async function resolveActionItemContext(
@@ -116,7 +188,15 @@ export async function resolveActionItemContext(
   const lines = lineIds.length
     ? await db.purchaseOrderLine.findMany({
         where: { id: { in: lineIds } },
-        select: { id: true, purchaseOrderId: true, itemNumber: true, description: true },
+        select: {
+          id: true,
+          purchaseOrderId: true,
+          itemNumber: true,
+          description: true,
+          quantity: true,
+          unitPrice: true,
+          needByDate: true,
+        },
       })
     : [];
   const lineById = new Map(lines.map((l) => [l.id, l]));
@@ -128,7 +208,14 @@ export async function resolveActionItemContext(
   const purchaseOrders = poIds.length
     ? await db.purchaseOrder.findMany({
         where: { id: { in: poIds } },
-        select: { id: true, supplier: { select: { name: true } }, _count: { select: { lines: true } } },
+        select: {
+          id: true,
+          number: true,
+          totalValue: true,
+          supplier: { select: { name: true } },
+          _count: { select: { lines: true } },
+          lines: { select: { needByDate: true }, orderBy: { needByDate: "asc" }, take: 1 },
+        },
       })
     : [];
   const poById = new Map(purchaseOrders.map((po) => [po.id, po]));
@@ -137,7 +224,12 @@ export async function resolveActionItemContext(
   const rfqs = rfqIds.length
     ? await db.rFQ.findMany({
         where: { id: { in: rfqIds } },
-        select: { id: true, _count: { select: { lines: true, invites: true } } },
+        select: {
+          id: true,
+          number: true,
+          quoteDeadline: true,
+          _count: { select: { lines: true, invites: true } },
+        },
       })
     : [];
   const rfqById = new Map(rfqs.map((r) => [r.id, r]));
@@ -150,8 +242,11 @@ export async function resolveActionItemContext(
         context.set(item.id, {
           href: `/dashboard/purchase-orders/${item.subjectId}`,
           entityLabel: "Purchase order",
-          identifier: po?.supplier.name ?? null,
+          identifier: po?.number ?? null,
+          supplierName: po?.supplier.name ?? null,
           detail: po ? `${po._count.lines} line${po._count.lines === 1 ? "" : "s"}` : null,
+          value: po ? Number(po.totalValue) : null,
+          needByDate: po?.lines[0]?.needByDate ?? null,
         });
         break;
       }
@@ -163,8 +258,14 @@ export async function resolveActionItemContext(
             ? `/dashboard/purchase-orders/${line.purchaseOrderId}?highlight=${line.id}`
             : null,
           entityLabel: "Purchase order line",
-          identifier: po?.supplier.name ?? null,
+          identifier: po?.number ?? null,
+          supplierName: po?.supplier.name ?? null,
           detail: line ? `${line.itemNumber} — ${line.description}` : null,
+          // Line-level items rank on the line's own extended value, not the
+          // whole order's: a proposed change on one $200 line of a $90,000
+          // order is a $200 decision.
+          value: line ? Number(line.quantity) * Number(line.unitPrice) : null,
+          needByDate: line?.needByDate ?? null,
         });
         break;
       }
@@ -173,10 +274,14 @@ export async function resolveActionItemContext(
         context.set(item.id, {
           href: `/dashboard/rfqs/${item.subjectId}`,
           entityLabel: "RFQ",
-          identifier: rfqDisplayNumber(item.subjectId),
+          identifier: rfq?.number ?? null,
+          supplierName: null,
           detail: rfq
             ? `${rfq._count.lines} line${rfq._count.lines === 1 ? "" : "s"}, ${rfq._count.invites} supplier${rfq._count.invites === 1 ? "" : "s"} invited`
             : null,
+          // An RFQ has no committed value yet — that is the point of it.
+          value: null,
+          needByDate: rfq?.quoteDeadline ?? null,
         });
         break;
       }
@@ -186,11 +291,36 @@ export async function resolveActionItemContext(
           href: null,
           entityLabel: "PO suggestion",
           identifier: null,
+          supplierName: null,
           detail: null,
+          value: null,
+          needByDate: null,
         });
     }
   }
   return context;
+}
+
+/**
+ * The ordering rule for anything that shows a queue: dwell weighted by what's
+ * at stake.
+ *
+ * Straight dwell descending is the obvious implementation and is wrong in the
+ * one case that matters — it puts a 40-day-old $200 order above a 4-day-old
+ * $80,000 one, and no buyer alive works that queue in that order. Value alone
+ * is equally wrong: it never surfaces the small thing that has been rotting
+ * for six weeks.
+ *
+ * Log-scaling the value keeps dwell as the primary axis (a week of waiting
+ * outranks a 10x price difference) while letting an order two orders of
+ * magnitude larger jump the queue. Deliberately not exposed as a sort option:
+ * there is one right order for a chase product and it isn't the user's to
+ * choose.
+ */
+export function chaseRank(item: { openedAt: Date }, value: number | null, now = new Date()): number {
+  const days = Math.max(0, (now.getTime() - item.openedAt.getTime()) / 86_400_000);
+  const stake = Math.log10(Math.max(100, value ?? 100));
+  return days * stake;
 }
 
 // The scoped, no-login "action view" link — see docs/architecture.md

@@ -13,8 +13,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ZenoSource",
-  description: "ZenoSource procurement platform",
+  // `template` rather than a fixed string: every one of the app's 23 routes
+  // rendered the identical title "ZenoSource", so browser history, tab
+  // switching and bookmarks were all unusable — every entry looked the same.
+  // Pages set their own `title` and inherit the suffix.
+  title: {
+    default: "ZenoSource",
+    template: "%s · ZenoSource",
+  },
+  description: "Procurement that chases itself — purchase orders, RFQs and supplier collaboration.",
 };
 
 export default function RootLayout({

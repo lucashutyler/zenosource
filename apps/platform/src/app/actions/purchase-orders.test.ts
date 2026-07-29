@@ -30,6 +30,7 @@ async function buildIssuedPoFixture() {
   const po = await db.purchaseOrder.create({
     data: {
       tenantId: tenant.id,
+      number: `P-${Math.floor(Math.random() * 1_000_000)}`,
       supplierId: supplier.id,
       status: "ISSUED",
       lines: {

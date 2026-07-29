@@ -16,6 +16,19 @@ export async function withTestDb<T>(fn: (client: Client) => Promise<T>): Promise
   }
 }
 
+// Fixtures allocate their document number from the tenant's own sequence, the
+// same single atomic statement the app uses (src/lib/document-number.ts) — so
+// a fixture PO is indistinguishable from one the app created, and two specs
+// running in parallel can't collide on `@@unique([tenantId, number])`.
+async function nextDocumentNumber(client: Client, tenantId: string, prefix: "P" | "Q" | "L") {
+  const { rows } = await client.query(
+    `UPDATE "Tenant" SET "nextDocumentNumber" = "nextDocumentNumber" + 1
+      WHERE "id" = $1 RETURNING "nextDocumentNumber" - 1 AS n`,
+    [tenantId]
+  );
+  return `${prefix}-${rows[0].n}`;
+}
+
 export async function findOpenActionItem(actionType: string) {
   return withTestDb(async (client) => {
     const { rows } = await client.query(
@@ -74,26 +87,43 @@ export async function findPurchaseOrderLine(status: string) {
 export async function createTestAcknowledgeItem() {
   return withTestDb(async (client) => {
     const { rows: tenantRows } = await client.query(`SELECT "id" FROM "Tenant" LIMIT 1`);
-    const { rows: supplierRows } = await client.query(`SELECT "id" FROM "Supplier" LIMIT 1`);
-    const { rows: contactRows } = await client.query(
-      `SELECT "id", "email" FROM "SupplierContact" WHERE "supplierId" = $1 LIMIT 1`,
-      [supplierRows[0].id]
-    );
     const tenantId = tenantRows[0].id;
-    const supplierId = supplierRows[0].id;
-    const contactId = contactRows[0].id;
-    const contactEmail = contactRows[0].email;
+
+    // Its own supplier and contact, not a shared seeded one.
+    //
+    // The chase carries a 24-hour server-side cooldown per action item and
+    // groups by recipient, so a fixture sharing a contact with another spec
+    // can have its email legitimately suppressed by whatever ran first — a
+    // test failure that looks like a bug in the mailbox and is actually the
+    // cooldown working. A unique recipient removes the coupling.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const supplierId = `e2esup${suffix}`;
+    const contactId = `e2econ${suffix}`;
+    const contactEmail = `contact-${suffix}@e2e-supplier.test`;
+    await client.query(
+      `INSERT INTO "Supplier" ("id", "tenantId", "name", "status", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, 'ACTIVE', now(), now())`,
+      [supplierId, tenantId, `E2E Supplier ${suffix}`]
+    );
+    await client.query(
+      `INSERT INTO "SupplierContact" ("id", "supplierId", "name", "email", "status", "createdAt", "updatedAt")
+       VALUES ($1, $2, 'E2E Contact', $3, 'ACTIVE', now(), now())`,
+      [contactId, supplierId, contactEmail]
+    );
 
     const poId = `e2e${Math.random().toString(36).slice(2, 10)}`;
+    const poNumber = await nextDocumentNumber(client, tenantId, "P");
     await client.query(
-      `INSERT INTO "PurchaseOrder" ("id", "tenantId", "supplierId", "status", "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, 'ISSUED', now(), now())`,
-      [poId, tenantId, supplierId]
+      `INSERT INTO "PurchaseOrder" ("id", "tenantId", "number", "supplierId", "status", "totalValue", "issuedAt", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, 'ISSUED', 1, now(), now(), now())`,
+      [poId, tenantId, poNumber, supplierId]
     );
     await client.query(
       `INSERT INTO "PurchaseOrderLine"
-         ("id", "purchaseOrderId", "lineNumber", "itemNumber", "description", "uom", "quantity", "unitPrice", "status", "createdAt", "updatedAt")
-       VALUES ($1, $2, 1, 'SKU-E2E-RACE', 'race test line', 'EA', 1, 1, 'PENDING_ACKNOWLEDGMENT', now(), now())`,
+         ("id", "purchaseOrderId", "lineNumber", "itemNumber", "description", "uom", "quantity", "unitPrice",
+          "needByDate", "status", "createdAt", "updatedAt")
+       VALUES ($1, $2, 1, 'SKU-E2E-RACE', 'race test line', 'EA', 1, 1,
+               (now() + interval '14 days')::date, 'PENDING_ACKNOWLEDGMENT', now(), now())`,
       [`${poId}-line`, poId]
     );
     const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
@@ -105,7 +135,15 @@ export async function createTestAcknowledgeItem() {
       [itemId, tenantId, poId, contactId, token]
     );
 
-    return { id: itemId, subjectId: poId, accessToken: token, contactEmail };
+    return { id: itemId, subjectId: poId, accessToken: token, contactEmail, poNumber };
+  });
+}
+
+export async function findPurchaseOrderNumber(id: string) {
+  return withTestDb(async (client) => {
+    const { rows } = await client.query(`SELECT "number" FROM "PurchaseOrder" WHERE "id" = $1`, [id]);
+    if (!rows[0]) throw new Error(`PurchaseOrder ${id} not found`);
+    return rows[0].number as string;
   });
 }
 
@@ -155,10 +193,11 @@ export async function createTestChangeProposalItem() {
     const ownerId = ownerRows[0].id;
 
     const poId = `e2e${Math.random().toString(36).slice(2, 10)}`;
+    const poNumber = await nextDocumentNumber(client, tenantId, "P");
     await client.query(
-      `INSERT INTO "PurchaseOrder" ("id", "tenantId", "supplierId", "status", "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, 'ACKNOWLEDGED', now(), now())`,
-      [poId, tenantId, supplierId]
+      `INSERT INTO "PurchaseOrder" ("id", "tenantId", "number", "supplierId", "status", "totalValue", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, 'ACKNOWLEDGED', 1, now(), now())`,
+      [poId, tenantId, poNumber, supplierId]
     );
     const lineId = `${poId}-line`;
     await client.query(
@@ -179,7 +218,7 @@ export async function createTestChangeProposalItem() {
       [itemId, tenantId, lineId, ownerId, token]
     );
 
-    return { id: itemId, poId, lineId, supplierName };
+    return { id: itemId, poId, poNumber, lineId, supplierName };
   });
 }
 
@@ -200,10 +239,21 @@ export async function createTestReviewRejectionItem() {
     const ownerId = ownerRows[0].id;
 
     const poId = `e2e${Math.random().toString(36).slice(2, 10)}`;
+    const poNumber = await nextDocumentNumber(client, tenantId, "P");
     await client.query(
-      `INSERT INTO "PurchaseOrder" ("id", "tenantId", "supplierId", "status", "rejectedAt", "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, 'REJECTED', now(), now(), now())`,
-      [poId, tenantId, supplierId]
+      `INSERT INTO "PurchaseOrder" ("id", "tenantId", "number", "supplierId", "status", "rejectionReason", "rejectedAt", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, 'REJECTED', 'e2e rejection fixture', now(), now(), now())`,
+      [poId, tenantId, poNumber, supplierId]
+    );
+    // A revision copies the source's lines, so the fixture needs at least one.
+    const { rows: locRows } = await client.query(`SELECT "id" FROM "Location" LIMIT 1`);
+    await client.query(
+      `INSERT INTO "PurchaseOrderLine"
+         ("id", "purchaseOrderId", "lineNumber", "itemNumber", "description", "uom", "quantity", "unitPrice",
+          "locationId", "status", "createdAt", "updatedAt")
+       VALUES ($1, $2, 1, 'SKU-E2E-REJECTED', 'rejection fixture line', 'EA', 1, 1, $3,
+               'PENDING_ACKNOWLEDGMENT', now(), now())`,
+      [`${poId}-line`, poId, locRows[0].id]
     );
     const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     const itemId = `${poId}-item`;
@@ -214,7 +264,7 @@ export async function createTestReviewRejectionItem() {
       [itemId, tenantId, poId, ownerId, token]
     );
 
-    return { id: itemId, poId };
+    return { id: itemId, poId, poNumber };
   });
 }
 
@@ -263,9 +313,9 @@ export async function createTestDraftPOForContactlessSupplier() {
 
     const poId = `e2e${Math.random().toString(36).slice(2, 10)}`;
     await client.query(
-      `INSERT INTO "PurchaseOrder" ("id", "tenantId", "supplierId", "status", "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, 'DRAFT', now(), now())`,
-      [poId, tenantId, supplierId]
+      `INSERT INTO "PurchaseOrder" ("id", "tenantId", "number", "supplierId", "status", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, 'DRAFT', now(), now())`,
+      [poId, tenantId, await nextDocumentNumber(client, tenantId, "P"), supplierId]
     );
     await client.query(
       `INSERT INTO "PurchaseOrderLine"
@@ -293,9 +343,9 @@ export async function createTestRfqAwardItem() {
 
     const rfqId = `e2e${Math.random().toString(36).slice(2, 10)}`;
     await client.query(
-      `INSERT INTO "RFQ" ("id", "tenantId", "status", "createdAt", "updatedAt")
-       VALUES ($1, $2, 'SENT', now(), now())`,
-      [rfqId, tenantId]
+      `INSERT INTO "RFQ" ("id", "tenantId", "number", "status", "sentAt", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, 'SENT', now(), now(), now())`,
+      [rfqId, tenantId, await nextDocumentNumber(client, tenantId, "Q")]
     );
     await client.query(
       `INSERT INTO "RFQLine" ("id", "rfqId", "itemNumber", "description", "uom", "quantity", "createdAt", "updatedAt")

@@ -1,42 +1,34 @@
-"use client";
+import type { Metadata } from "next";
+import { getCurrentInternalUser } from "@/lib/dal";
+import { EmptyState, LinkButton, PageHeader } from "@/components/ui";
+import { LocationForm } from "../location-form";
 
-import { useActionState } from "react";
-import { createLocation } from "@/app/actions/locations";
-import { Card, Field, Input, ErrorText, SubmitButton, PageHeader } from "@/components/ui";
+export const metadata: Metadata = { title: "Add a location" };
 
-// Server-side enforcement lives in createLocation itself (OWNER-only) — this
-// page isn't gated per-role since getCurrentInternalUser() runs in a client
-// component's parent layout, not here; the action will simply reject a
-// MEMBER's submission with a clear error rather than silently succeeding.
-export default function NewLocationPage() {
-  const [state, action, pending] = useActionState(createLocation, undefined);
+export default async function NewLocationPage() {
+  const user = await getCurrentInternalUser();
 
-  return (
-    <div className="max-w-lg">
-      <PageHeader title="Add location" />
-      <Card className="p-6">
-        <form action={action}>
-          <Field label="Name" name="name">
-            <Input name="name" required placeholder="Chicago Plant" />
-          </Field>
-          <Field label="Code" name="code">
-            <Input name="code" required placeholder="CHI-01" />
-          </Field>
-          <Field label="City" name="city">
-            <Input name="city" />
-          </Field>
-          <Field label="Region / State" name="region">
-            <Input name="region" />
-          </Field>
-          <Field label="Country" name="country">
-            <Input name="country" />
-          </Field>
-          <ErrorText>{state?.error}</ErrorText>
-          <SubmitButton pending={pending}>
-            {pending ? "Saving..." : "Save location"}
-          </SubmitButton>
-        </form>
-      </Card>
-    </div>
-  );
+  // Checked here as well as in the action.
+  //
+  // The form used to render in full for a MEMBER and only refuse on submit,
+  // after they'd typed an address — the audit's example of an authorization
+  // rule that's correct on the server and dishonest on the screen. The action
+  // keeps its own gate; this one exists so nobody wastes their time.
+  if (user.role !== "OWNER") {
+    return (
+      <div>
+        <PageHeader
+          back={{ href: "/dashboard/locations", label: "All locations" }}
+          title="Add a location"
+        />
+        <EmptyState
+          headline="Owners manage locations."
+          body="A location decides who can see which orders, so creating one is an access-control decision. Ask an owner on your team."
+          action={<LinkButton href="/dashboard/locations">Back to locations</LinkButton>}
+        />
+      </div>
+    );
+  }
+
+  return <LocationForm mode="create" />;
 }

@@ -1,101 +1,137 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getCurrentInternalUser } from "@/lib/dal";
 import { db } from "@/lib/db";
-import { Card, PageHeader, LinkButton, Select } from "@/components/ui";
+import { formatDate, plural, todayUTC } from "@/lib/format";
+import { EmptyState, Ledger, LinkButton, DocNumber, PageHeader, StatusChip, Td, Th } from "@/components/ui";
+import { ListFilters } from "@/components/list-controls";
 import type { Prisma } from "@/generated/prisma/client";
+
+export const metadata: Metadata = { title: "Price lists" };
 
 export default async function PriceListsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ supplierId?: string; sort?: string }>;
+  searchParams: Promise<{ supplierId?: string }>;
 }) {
-  const { supplierId, sort } = await searchParams;
+  const params = await searchParams;
   const user = await getCurrentInternalUser();
-  if (!user) return null;
 
   const suppliers = await db.supplier.findMany({
     where: { tenantId: user.tenantId },
     orderBy: { name: "asc" },
+    select: { id: true, name: true },
   });
 
   const where: Prisma.PriceListWhereInput = {
     tenantId: user.tenantId,
-    ...(supplierId ? { supplierId } : {}),
+    ...(params.supplierId ? { supplierId: params.supplierId } : {}),
   };
 
   const priceLists = await db.priceList.findMany({
     where,
     include: { supplier: true, _count: { select: { items: true } } },
-    orderBy: { createdAt: sort === "oldest" ? "asc" : "desc" },
+    orderBy: [{ supplier: { name: "asc" } }, { createdAt: "desc" }],
   });
+
+  const today = todayUTC();
 
   return (
     <div>
       <PageHeader
         title="Price lists"
-        action={<LinkButton href="/dashboard/price-lists/new">New price list</LinkButton>}
+        meta="What you've negotiated, per supplier and per quantity. Order lines price themselves from these."
+        actions={
+          <LinkButton href="/dashboard/price-lists/new" variant="primary">
+            New price list
+          </LinkButton>
+        }
       />
 
-      <form method="get" className="mb-4 flex flex-wrap items-end gap-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-500">Supplier</label>
-          <Select name="supplierId" defaultValue={supplierId ?? ""}>
-            <option value="">All</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-zinc-500">Sort</label>
-          <Select name="sort" defaultValue={sort ?? "newest"}>
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-          </Select>
-        </div>
-        <button
-          type="submit"
-          className="rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700"
-        >
-          Apply
-        </button>
-      </form>
+      <ListFilters
+        filters={[
+          {
+            name: "supplierId",
+            label: "Supplier",
+            value: params.supplierId ?? "",
+            allLabel: "Every supplier",
+            options: suppliers.map((s) => ({ value: s.id, label: s.name })),
+          },
+        ]}
+      />
 
       {priceLists.length === 0 ? (
-        <p className="text-sm text-zinc-500">No price lists match these filters.</p>
+        <EmptyState
+          headline={params.supplierId ? "Nothing for that supplier." : "No price lists yet."}
+          body="Without one, every purchase order line is priced from memory — and nothing tells the buyer when they've typed something other than the rate you agreed."
+          action={
+            <LinkButton href="/dashboard/price-lists/new" variant="primary">
+              New price list
+            </LinkButton>
+          }
+        />
       ) : (
-        <Card>
-          <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-            {priceLists.map((pl) => (
-              <li key={pl.id}>
-                <Link
-                  href={`/dashboard/price-lists/${pl.id}`}
-                  className="flex items-center justify-between px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
-                      {pl.supplier.name}
-                    </p>
-                    <p className="text-xs text-zinc-500">
-                      {pl._count.items} item{pl._count.items === 1 ? "" : "s"}
-                      {pl.effectiveFrom || pl.effectiveTo ? (
-                        <>
-                          {" "}
-                          · {pl.effectiveFrom ? pl.effectiveFrom.toLocaleDateString() : "—"} to{" "}
-                          {pl.effectiveTo ? pl.effectiveTo.toLocaleDateString() : "—"}
-                        </>
-                      ) : null}
-                    </p>
-                  </div>
-                  <span className="text-xs text-zinc-400">{pl.createdAt.toLocaleDateString()}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
+        <Ledger caption="Price lists">
+          <thead>
+            <tr>
+              <Th width="7.5rem">№</Th>
+              <Th>Supplier</Th>
+              <Th align="right" width="6rem">
+                Parts
+              </Th>
+              <Th width="16rem">Effective</Th>
+              <Th width="8rem" />
+            </tr>
+          </thead>
+          <tbody>
+            {priceLists.map((list) => {
+              // "What does SKU-2050 cost today?" needs an answer, and a list
+              // that expired in March silently answering it is worse than no
+              // answer at all.
+              const notYet = list.effectiveFrom && list.effectiveFrom > today;
+              const expired = list.effectiveTo && list.effectiveTo < today;
+              return (
+                <tr key={list.id} className="hover:bg-rule/30">
+                  <Td mono>
+                    <Link
+                      href={`/dashboard/price-lists/${list.id}`}
+                      className="underline-offset-2 hover:underline"
+                    >
+                      <DocNumber>{list.number}</DocNumber>
+                    </Link>
+                  </Td>
+                  <Td>{list.supplier.name}</Td>
+                  <Td align="right" mono>
+                    {list._count.items || <span className="text-ink-faint">—</span>}
+                  </Td>
+                  <Td>
+                    <span className="text-ink-soft">
+                      {list.effectiveFrom || list.effectiveTo
+                        ? `${list.effectiveFrom ? formatDate(list.effectiveFrom) : "always"} → ${
+                            list.effectiveTo ? formatDate(list.effectiveTo) : "open-ended"
+                          }`
+                        : "no dates set"}
+                    </span>
+                  </Td>
+                  <Td>
+                    {expired ? (
+                      <StatusChip variant="settled">Expired</StatusChip>
+                    ) : notYet ? (
+                      <StatusChip variant="live">Not yet live</StatusChip>
+                    ) : (
+                      <span className="text-xs text-settled">In force</span>
+                    )}
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Ledger>
       )}
+
+      <p className="mt-4 text-sm text-ink-faint">
+        {priceLists.length} {plural(priceLists.length, "list")} · prices are USD.
+      </p>
     </div>
   );
 }

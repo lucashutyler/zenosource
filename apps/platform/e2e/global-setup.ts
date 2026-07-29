@@ -12,7 +12,12 @@ export default async function globalSetup() {
   // Fresh, known data for every run — see prisma/seed.ts (idempotent: wipes
   // and recreates). Runs with the test DB's env explicitly, independent of
   // whatever's loaded in this process already.
-  execSync("dotenv -e .env.test -- npx prisma db push", {
+  //
+  // `migrate deploy`, not `db push`: the migration files are what a real
+  // deploy runs, so every E2E run exercises them. Phase 1 shipped four schema
+  // changes that only ever existed as pushes, and nothing caught it because
+  // nothing ever ran the migrations.
+  execSync("dotenv -e .env.test -- npx prisma migrate deploy", {
     cwd: path.resolve(__dirname, ".."),
     stdio: "inherit",
   });

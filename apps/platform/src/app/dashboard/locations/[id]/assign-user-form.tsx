@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { assignUserToLocation } from "@/app/actions/locations";
-import { Field, Select, ErrorText, SubmitButton } from "@/components/ui";
+import { SelectField, SubmitButton } from "@/components/forms";
 
 export function AssignUserForm({
   locationId,
@@ -11,41 +11,51 @@ export function AssignUserForm({
   locationId: string;
   candidates: { id: string; name: string; email: string }[];
 }) {
-  const boundAction = assignUserToLocation.bind(null, locationId);
-  const [state, action, pending] = useActionState(boundAction, undefined);
+  const [state, action] = useActionState(assignUserToLocation.bind(null, locationId), undefined);
+  const errors = state?.fieldErrors ?? {};
 
   if (candidates.length === 0) {
     return (
-      <p className="border-t border-zinc-200 p-4 text-xs text-zinc-500 dark:border-zinc-800">
-        Every internal user is already assigned to this location.
+      <p className="px-4 py-3 text-sm text-ink-faint">
+        Everyone on the team already has access to this site.
       </p>
     );
   }
 
   return (
-    <form action={action} className="flex flex-wrap items-end gap-3 border-t border-zinc-200 p-4 dark:border-zinc-800">
-      <div className="flex-1">
-        <Field label="Assign a user" name="internalUserId">
-          <Select name="internalUserId" required defaultValue="">
-            <option value="" disabled>
-              Choose a user
+    <form action={action} className="flex flex-wrap items-start gap-3 bg-paper px-4 py-3">
+      <div className="min-w-56 flex-1">
+        <SelectField
+          label="Give someone access"
+          name="internalUserId"
+          required
+          defaultValue=""
+          error={errors.internalUserId}
+          className="mb-0"
+        >
+          <option value="">Choose a person…</option>
+          {candidates.map((candidate) => (
+            <option key={candidate.id} value={candidate.id}>
+              {candidate.name} ({candidate.email})
             </option>
-            {candidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.email})
-              </option>
-            ))}
-          </Select>
-        </Field>
+          ))}
+        </SelectField>
       </div>
-      <div className="mb-4">
-        <SubmitButton pending={pending} variant="secondary">
-          {pending ? "Assigning..." : "Assign"}
+      <div className="pt-6">
+        <SubmitButton variant="secondary" pendingLabel="Assigning…">
+          Assign
         </SubmitButton>
       </div>
-      <div className="basis-full">
-        <ErrorText>{state?.error}</ErrorText>
-      </div>
+      {state?.error && (
+        <p role="alert" className="basis-full text-xs font-medium text-age-4">
+          {state.error}
+        </p>
+      )}
+      {state?.ok && (
+        <p role="status" className="basis-full text-xs text-settled">
+          {state.ok}
+        </p>
+      )}
     </form>
   );
 }

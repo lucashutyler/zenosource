@@ -2,34 +2,56 @@
 
 import { useActionState } from "react";
 import { addPriceListItem } from "@/app/actions/price-lists";
-import { Field, Input, ErrorText, SubmitButton } from "@/components/ui";
+import { FormErrors, SubmitButton, TextField } from "@/components/forms";
 
 export function AddItemForm({ priceListId }: { priceListId: string }) {
-  const boundAction = addPriceListItem.bind(null, priceListId);
-  const [state, action, pending] = useActionState(boundAction, undefined);
+  const [state, action] = useActionState(addPriceListItem.bind(null, priceListId), undefined);
+  const errors = state?.fieldErrors ?? {};
 
   return (
-    <form action={action} className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-      <Field label="Item #" name="itemNumber">
-        <Input name="itemNumber" required />
-      </Field>
-      <Field label="Description" name="description">
-        <Input name="description" required />
-      </Field>
-      <Field label="UOM" name="uom">
-        <Input name="uom" required defaultValue="EA" />
-      </Field>
-      <Field label="Min quantity" name="minQuantity">
-        <Input name="minQuantity" type="number" step="1" min="0" required defaultValue="1" />
-      </Field>
-      <Field label="Unit price" name="unitPrice">
-        <Input name="unitPrice" type="number" step="any" min="0" required />
-      </Field>
-      <div className="mb-4 flex items-end">
-        <SubmitButton pending={pending}>{pending ? "Adding..." : "Add item"}</SubmitButton>
+    <form action={action}>
+      <FormErrors state={state} />
+      <div className="grid gap-x-4 sm:grid-cols-3">
+        <TextField
+          label="Part number"
+          name="itemNumber"
+          required
+          error={errors.itemNumber}
+          className="font-mono"
+        />
+        <TextField label="Description" name="description" required error={errors.description} />
+        <TextField label="Unit of measure" name="uom" required defaultValue="EA" error={errors.uom} />
+        <TextField
+          label="From quantity"
+          name="minQuantity"
+          type="number"
+          min="0"
+          step="1"
+          inputMode="numeric"
+          required
+          defaultValue="1"
+          hint="The first band. Add more afterwards."
+          error={errors.minQuantity}
+        />
+        <TextField
+          label="Price each"
+          name="unitPrice"
+          type="number"
+          min="0"
+          step="any"
+          inputMode="decimal"
+          required
+          hint="USD. Up to four decimals."
+          error={errors.unitPrice}
+        />
       </div>
-      <div className="col-span-full">
-        <ErrorText>{state?.error}</ErrorText>
+      <div className="flex items-center gap-3">
+        <SubmitButton pendingLabel="Adding…">Add the part</SubmitButton>
+        {state?.ok && (
+          <span role="status" className="text-sm text-settled">
+            {state.ok}
+          </span>
+        )}
       </div>
     </form>
   );
