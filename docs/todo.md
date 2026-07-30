@@ -4,7 +4,7 @@ Phased build plan. Nothing here is scaffolded yet — this is the plan, not a st
 
 ## Phase 0 — Foundations
 
-- [x] `git init` (private repo) — done locally; not yet committed, see [Decided](#decided)
+- [x] `git init` — done, and published to [github.com/lucashutyler/zenosource](https://github.com/lucashutyler/zenosource) on 2026-07-29. See [Decided](#decided) for the visibility change.
 - [x] Scaffold `apps/homepage`, `apps/platform`, `integrations/erp/epicor`, `integrations/idp/okta` as empty subprojects
 - [x] Decide canonical entity schema — see [docs/data-model.md](data-model.md) (a few sub-decisions remain open, listed below)
 - [x] Decide monorepo vs. polyrepo — monorepo, matching the structure already in place
@@ -296,11 +296,15 @@ Surfaced by the judges attacking the proposals. Not scoped above, and each is re
 
 - **Repo layout**: monorepo — one repo, independent subproject directories, not literal separate repos.
 - **PO cancellation/rejection**: both are explicit statuses on `PurchaseOrder` — `rejected` (supplier-initiated, opens a buyer action item) and `cancelled` (buyer-initiated, reachable from any non-terminal state). See [docs/data-model.md#purchaseorder](data-model.md#purchaseorder).
-- **Repo state**: `git init` done locally with a general-purpose `.gitignore`; nothing has been committed yet — that's a deliberate pause, not an oversight (commits only happen when you ask for one).
+- **Repo state**: pushed to [github.com/lucashutyler/zenosource](https://github.com/lucashutyler/zenosource), `main` (2026-07-29). CI (`.github/workflows/platform-ci.yml`) has a remote to run against for the first time. `.env` and `.env.test` stay gitignored — the only secret-shaped values in them are a throwaway local Postgres password and a dev session secret, and CI writes its own copies.
 - **Hosting**: single multi-tenant SaaS — no self-hosted/per-customer deployment.
 - **Multi-tenancy**: one shared database, tenants isolated by `tenant_id` scoping, not physically separate data stores.
 - **IdP integrations are their own subprojects**, same as ERP integrations (`integrations/idp/okta`, not folded into `apps/platform`'s auth layer).
-- **Repo/license**: private.
+- **Repo/license: public, MIT** (2026-07-29) — reversing the earlier "private" decision. Consequences worth being deliberate about, since they don't reverse cleanly:
+  - [docs/product.md](product.md) states the competitive position against SourceDay and Axya by name, and [docs/test1a-2.md](test1a-2.md) contains the design strategy and the reasoning behind the visual system. Both are now public reading.
+  - The pricing model is still an open question below, and the placeholder reasoning is public with it.
+  - Going public is one-way in practice: content can be forked, cached and indexed, so flipping back to private later does not unpublish anything already fetched.
+  - Nothing sensitive is tracked — no `.env`, no keys, no credentials — and the seeded demo password (`zenosource-dev`) is a fixture for a local database, not an account.
 - **Reminder channel (v1)**: email only — SMS is a later addition, not a v1 dependency. In-app, open action items are the first thing a user sees on sign-in, surfaced with a count/badge; the dashboard is treated as equally central to the reminder system as the email itself.
 - **External action-response mechanics**: a scoped link in the reminder email opens a dedicated, no-login "action view." The grant is tied to the action item's lifecycle, not single-use — leaving the form incomplete doesn't burn the link; it stays usable until the action item resolves. True inbound reply-to-email parsing is deferred to a future phase, not a v1 dependency.
 - **External supplier accounts: deferred** (2026-07-28) — no supplier password login or portal in v1; the scoped action-view links plus reminder digests are the entire external surface. [architecture.md](architecture.md), [product.md](product.md), and the root CLAUDE.md are amended accordingly, and the unused `SupplierContact.passwordHash` column is dropped. Revisit no earlier than Phase 5's security review.
