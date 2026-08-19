@@ -33,6 +33,14 @@ IdP integrations fit the same registry even though they gate *auth* capability r
 
 Treat this registry as the actual extensibility point of the platform: a new integration should only ever need to (a) implement its own subproject, (b) declare its capabilities, and (c) map its data into ZenoSource's canonical entities. It should never require changes to unrelated features.
 
+**Built in Phase 2** (2026-08-19), alongside Epicor — deliberately not before, since a registry with nothing to register is scaffolding rather than infrastructure. Where it lives:
+
+- **Declarations are code, not rows** — `apps/platform/src/lib/integrations/capabilities.ts` (the capability vocabulary and the feature registry) and `registry.ts` (which integrations exist and what each provides). Every tenant sees the same list, so putting it in the database would make adding a feature a migration.
+- **Connection state is per-tenant and therefore a table** — `IntegrationConnection`, holding whether a tenant connected an integration, the credentials it connected with (sealed; see `secrets.ts`), and whether those still work.
+- **A capability is granted only when a `CONNECTED` connection declares it *and* the last health check verified it.** An Epicor API key's Access Scope is per-service, so a partial grant is the normal case at a real customer; unlocking a feature the instance can't actually serve produces a screen that is empty forever with no explanation.
+- **A broken connection withdraws its capabilities and opens an action item.** `DEGRADED` grants nothing, because a feature reading data that stopped updating is worse than an absent one — and a state that turns a feature off and tells nobody is the modeling bug [product.md](product.md) names, so `INTEGRATION_RECONNECT` is owned by an OWNER and chased on the same clock as everything else.
+- **The connector contract is `contract.ts`**, stated entirely in ZenoSource's vocabulary. An integration subproject depends on nothing in the platform and restates the canonical shapes structurally; the platform depends on the integration. `conformance.test.ts` turns any drift between the two into a build failure.
+
 ## Tenancy & users
 
 - **ZenoSource is a single multi-tenant SaaS product** — not self-hosted or deployed per customer. All tenants share one database, isolated by `tenant_id` scoping rather than physically separate data stores.

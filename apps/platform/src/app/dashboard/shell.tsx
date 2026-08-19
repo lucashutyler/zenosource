@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X, PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { NAV_LINKS, MAILBOX_NAV_LINK } from "./nav-links";
+import { NAV_LINKS, MAILBOX_NAV_LINK, PO_SUGGESTIONS_NAV_LINK } from "./nav-links";
 import { UserMenu } from "./user-menu";
 
 function isActive(pathname: string, href: string) {
@@ -19,6 +19,7 @@ export function DashboardShell({
   locationScope,
   openCount,
   showMailbox,
+  showPOSuggestions,
   children,
 }: {
   userName?: string;
@@ -29,12 +30,22 @@ export function DashboardShell({
   locationScope: string[] | null;
   openCount: number;
   showMailbox?: boolean;
+  /** True once a connected integration supplies `po_suggestions`. */
+  showPOSuggestions?: boolean;
   children: ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
-  const navLinks = showMailbox ? [...NAV_LINKS, MAILBOX_NAV_LINK] : NAV_LINKS;
+  // PO suggestions sits with the other work surfaces, straight after RFQs —
+  // it is work to review, not a settings page. Appended links (the mailbox)
+  // stay at the end.
+  const navLinks = [
+    ...NAV_LINKS.slice(0, 3),
+    ...(showPOSuggestions ? [PO_SUGGESTIONS_NAV_LINK] : []),
+    ...NAV_LINKS.slice(3),
+    ...(showMailbox ? [MAILBOX_NAV_LINK] : []),
+  ];
 
   // Auto-close the mobile drawer whenever navigation happens. Adjusted
   // during render (React's recommended pattern for "reset state when a

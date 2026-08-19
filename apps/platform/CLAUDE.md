@@ -40,6 +40,14 @@ npm run dev                  # http://localhost:3000
 
 Seeded login is printed by `npm run seed`.
 
+`.env` needs `DATABASE_URL`, `SESSION_SECRET`, `APP_BASE_URL`, and — to connect an integration — `INTEGRATION_SECRET_KEY`, 32 bytes of base64 that seals stored ERP credentials. Generate one with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+Without it the app runs fine and the connect form refuses to save rather than storing a service account in plaintext. `.env.test` needs the same four, with `APP_BASE_URL="http://localhost:3100"` — the E2E server's port, not 3000, or every action link in a captured email points at nothing.
+
 **If pages 500 after a schema change, check for a stale `next dev`.** A long-running dev server holds the Prisma client it started with, so once you change the schema its queries reference columns the database no longer has — and every affected route throws while a freshly started server on another port is fine. This has been mistaken for a real outage twice. Restart the server, don't debug the query.
 
 **Email in dev**: with no `EMAIL_PROVIDER` set (the default), outbound email is captured to the `CapturedEmail` table instead of being delivered. Browse it at `/dashboard/emails` ("Emails (dev)" in the nav): the `/a/{token}` action links inside are clickable, the HTML body renders in a 390px phone frame, and the chase can be run from the page — so the whole external no-login flow works without a provider. Setting `EMAIL_PROVIDER` disables the page and the capture path (`src/lib/email/sender.ts`).
@@ -71,9 +79,23 @@ Verify a migration before committing it by applying it to a copy of a *populated
 docker compose exec -T db psql -U zenosource -d postgres -c "CREATE DATABASE zenosource_check TEMPLATE zenosource;"
 ```
 
+## Integrations
+
+`src/lib/integrations/` is the capability model from [docs/architecture.md](../../docs/architecture.md#extensibility--capability-model), built in Phase 2 alongside Epicor. The split that matters:
+
+- **Declarations are code** (`capabilities.ts`, `registry.ts`) — same for every tenant, so a row would just be a migration tax. **Connection state is a table** (`IntegrationConnection`) — per-tenant, and the thing that actually gates.
+- **Gate at the route, not just the nav.** `requireFeature(tenantId, "po-suggestions")` calls `notFound()`; a link merely hidden from the sidebar but reachable by typing the URL is the same bug as the locations list that was tenant-scoped and not location-scoped.
+- **`DEGRADED` grants nothing.** A feature reading data that stopped updating is worse than an absent one, and the withdrawal is loud: `recordHealth()` opens an `INTEGRATION_RECONNECT` item against an OWNER. Don't add a status that turns a feature off quietly — `lifecycle.test.ts` will fail you, which is the point.
+- **Credentials are sealed** (`secrets.ts`, AES-256-GCM under `INTEGRATION_SECRET_KEY`). Never log a `ConnectorSession`, never render a secret back into a form, and don't add a code path that stores one unsealed — `connectIntegration` refuses to run at all without a key configured.
+- **The connector boundary is `contract.ts`.** No Epicor vocabulary — no BO name, no OData fragment — belongs anywhere in `src/`. Integration packages depend on nothing here and are wired in through `connectors.ts`, where the assignment to `ErpConnector` is the conformance check.
+- **`runSync` takes its connector as a parameter**, same as `runReminderJob` takes its db and sender: it has to run identically from a server action, a scheduler, and a test with a scripted transport. Production callers omit it.
+- **Mirrored data never overwrites collaboration state.** The ERP owns quantity, price and dates; acknowledgment, promise dates and proposed changes are ours. `statusToApply()` only moves forward from `DRAFT` and accepts terminal states — a sync that turned `ACKNOWLEDGED` back into `ISSUED` would re-chase a supplier who already answered, which is the failure this product sells itself as preventing.
+
+`@zenosource/epicor` is a `file:` dependency symlinked to `integrations/erp/epicor`. Turbopack won't resolve a link outside its filesystem root, so `next.config.ts` sets `turbopack.root` to the repo and `transpilePackages` to the package — both are load-bearing, and dropping either breaks `next build` with a bare module-not-found.
+
 ## Testing
 
-- **Unit/integration**: Vitest (`npm test`, `npm run test:watch`, `npm run test:ui`). Runs against a dedicated `zenosource_test` database (not the dev one) — see `.env.test` and `vitest.setup.ts`. `src/lib/session.test.ts` mocks `next/headers` to test the real exported functions without a Next.js request context; most other files (`src/lib/reminders.test.ts`, `src/app/actions/purchase-orders.test.ts`, `src/lib/access.test.ts`) run against the real test DB and start each test from a clean slate via the shared `wipeTestDb()` helper (`src/lib/testing/wipe-test-db.ts`) — it has to stay in sync with `prisma/seed.ts`'s deletion order, since the test DB is shared with every other Vitest file *and* the E2E suite below, so a partial wipe can hit an FK constraint from data another suite left behind. (`src/lib/email/sender.test.ts` is the deliberate exception — it uses per-run-unique fixture values instead of wiping, specifically so it stays safe to re-run in isolation via `test:watch`.)
+- **Unit/integration**: Vitest (`npm test`, `npm run test:watch`, `npm run test:ui`). Runs against a dedicated `zenosource_test` database (not the dev one) — see `.env.test` and `vitest.setup.ts`. `src/lib/session.test.ts` mocks `next/headers` to test the real exported functions without a Next.js request context; most other files (`src/lib/reminders.test.ts`, `src/app/actions/purchase-orders.test.ts`, `src/lib/access.test.ts`) run against the real test DB and start each test from a clean slate via the shared `wipeTestDb()` helper (`src/lib/testing/wipe-test-db.ts`) — it has to stay in sync with `prisma/seed.ts`'s deletion order (asserted by `src/lib/testing/wipe-test-db.test.ts`, after adding `IntegrationConnection` to one and not the other took down E2E global setup), since the test DB is shared with every other Vitest file *and* the E2E suite below, so a partial wipe can hit an FK constraint from data another suite left behind. (`src/lib/email/sender.test.ts` is the deliberate exception — it uses per-run-unique fixture values instead of wiping, specifically so it stays safe to re-run in isolation via `test:watch`.)
 - **End-to-end**: Playwright (`npm run test:e2e`, `npm run test:e2e:ui`). Also runs against `zenosource_test` — `e2e/global-setup.ts` deploys the migrations and reseeds before every run, so specs always start from known data. The E2E server runs on port 3100 with its own build directory (`E2E_DIST_DIR=.next-e2e` in `next.config.ts`) specifically so it can run *alongside* a manually-running `npm run dev` without Next's project-directory dev lock killing one of them. `e2e/helpers/db.ts` uses raw `pg` queries rather than the generated Prisma client — Playwright's own TS transform doesn't handle the generated client's `import.meta.url` usage (tsx and Next's bundler both do fine; this is specific to Playwright's pipeline).
 - **CI**: `.github/workflows/platform-ci.yml` runs typecheck/lint, unit tests, and E2E on push/PR, each E2E/unit job with its own Postgres service container — so this class of shared-test-DB interference can't happen in CI even though it's a real local concern.
 - **Add tests with the change that needs them**, not as a follow-up — a race-condition fix without a test proving the race is closed isn't done. When you build a new server action or lifecycle transition, prefer extending the existing integration-test pattern (a real test-DB write, not a mocked Prisma client) over a pure unit test with mocks — this app's server actions are thin enough that mocking them tends to test the mock, not the behavior.

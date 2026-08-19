@@ -128,6 +128,29 @@ export function formatDwell(since: Date | string, now: Date = new Date()): strin
 }
 
 /**
+ * `in 12d` / `3d ago` / `today` — a deadline that hasn't arrived yet.
+ *
+ * Dwell's mirror image, and it needs its own function because the sign
+ * matters. Everything else in this product measures how long something has
+ * been waiting, which is always in the past; a PO suggestion is the one
+ * surface where the date is usually ahead of you, and rendering "12d" for
+ * both "needed twelve days ago" and "needed in twelve days" would collapse
+ * the only distinction that decides whether to act today.
+ */
+export function formatDueIn(date: Date | string, now: Date = new Date()): string {
+  const target = typeof date === "string" ? new Date(date) : date;
+  // Both directions are measured as their own positive span rather than by
+  // negating one of them. daysBetween floors, so a deadline eight hours away
+  // is -1 elapsed and 0 ahead — reading the sign alone would render that as
+  // "in today".
+  const elapsed = daysBetween(target, now);
+  if (elapsed > 0) return `${formatDwell(target, now)} ago`;
+  const ahead = daysBetween(now, target);
+  if (ahead <= 0) return "today";
+  return `in ${formatDwell(now, target)}`;
+}
+
+/**
  * Where a dwell sits on the five-step oxidation ramp — 0 (fresh steel) to
  * 4 (oxblood). Hue is redundantly encoded as stroke weight in the CSS, so
  * the ramp survives greyscale, colour-blindness and print.

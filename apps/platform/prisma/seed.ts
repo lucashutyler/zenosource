@@ -130,6 +130,9 @@ async function main() {
   await db.capturedEmail.deleteMany();
   await db.statusEvent.deleteMany();
   await db.actionItem.deleteMany();
+  await db.integrationSyncRun.deleteMany();
+  await db.integrationConnection.deleteMany();
+  await db.pOSuggestion.deleteMany();
   await db.rFQQuoteLine.deleteMany();
   await db.rFQQuote.deleteMany();
   await db.rFQSupplierInvite.deleteMany();

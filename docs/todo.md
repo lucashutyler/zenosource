@@ -1,6 +1,7 @@
 # TODO
 
-Phased build plan. Nothing here is scaffolded yet — this is the plan, not a status report.
+Phased build plan, kept current as phases close. Phases 0 through 1b are done and `apps/platform` runs;
+**Phase 2 (Epicor) is built and awaiting a live instance to validate against.** Phases 3 through 6 are not started.
 
 ## Phase 0 — Foundations
 
@@ -264,13 +265,31 @@ Surfaced by the judges attacking the proposals. Not scoped above, and each is re
 
 ## Phase 2 — Epicor integration (`integrations/erp/epicor`)
 
-- [ ] Integration/capability registry — moved from Phase 1: the concept is designed in [docs/architecture.md](architecture.md#extensibility--capability-model) but there's no code for it yet. This is platform infrastructure, not Epicor-specific, but it has nothing real to register or gate until an actual integration exists — building it against zero integrations would be speculative scaffolding, not tested infrastructure. Build this first in this phase, before the Epicor-specific work below, since PO Suggestions depends on it.
-- [ ] API Key + OAuth2/Basic auth setup, connection health check that distinguishes API-key vs. identity-credential failures
-- [ ] PO sync (`POHeader`/`PODetail`/`PORel`) — Epicor → ZenoSource, plus bidirectional status/date/qty updates
-- [ ] PO Suggestions ingestion (`POSuggSvc`, read-only) → unlocks the PO Suggestions feature via the capability registry
-- [ ] Supplier sync (`VendorSvc`)
-- [ ] Vendor-part pricing sync (`VendPartSvc`) → populates `PriceList`/`PriceBreak`
-- [ ] Updatable BAQ layer for write-back instead of raw BO calls
+**Built 2026-08-19, not yet validated against a live Kinetic instance.** Everything below is implemented and tested against a scripted transport; there is no Epicor in CI and won't be until Phase 5 finds a pilot customer. See [What's built, and what a pilot will move](#whats-built-and-what-a-pilot-will-move) at the end of this section for what that means concretely — it is the honest half of these checkboxes and should be read with them.
+
+- [x] Integration/capability registry — moved from Phase 1: the concept is designed in [docs/architecture.md](architecture.md#extensibility--capability-model) but there's no code for it yet. This is platform infrastructure, not Epicor-specific, but it has nothing real to register or gate until an actual integration exists — building it against zero integrations would be speculative scaffolding, not tested infrastructure. Build this first in this phase, before the Epicor-specific work below, since PO Suggestions depends on it. *Shipped as `apps/platform/src/lib/integrations/`: capability vocabulary and feature registry in code, per-tenant connection state in the database, `requireFeature()` gating routes and the nav. `registry.test.ts` fails the build if a feature requires a capability nothing supplies, if a declared capability unlocks nothing, or if locked-state copy leaks our vocabulary into a buyer's screen.*
+- [x] API Key + OAuth2/Basic auth setup, connection health check that distinguishes API-key vs. identity-credential failures — *and it never guesses. Kinetic's gateway checks the API key before authentication runs, so an unmarked 401 is re-sent with the identity header removed: same rejection means the key, a different one means the identity. Health and capability probing are the same pass, so a key whose Access Scope omits `POSuggSvc` connects fine and simply doesn't supply `po_suggestions`.*
+- [x] PO sync (`POHeader`/`PODetail`/`PORel`) — Epicor → ZenoSource, plus bidirectional status/date/qty updates. *Epicor's three levels collapse into our two: need-by comes from the earliest still-open release, received quantity sums across all of them. Status only ever moves forward from `DRAFT`, and terminal states always win — `ISSUED` never overwrites `ACKNOWLEDGED`, because Epicor cannot see that a supplier answered through ZenoSource and a nightly sync that erased that would re-chase someone who already replied.*
+- [x] PO Suggestions ingestion (`POSuggSvc`, read-only) → unlocks the PO Suggestions feature via the capability registry. *Withdrawn suggestions go `SUPERSEDED` and stop being chased — MRP reruns constantly, and chasing a buyer to act on demand that no longer exists is the failure this product exists to prevent.*
+- [x] Supplier sync (`VendorSvc`)
+- [x] Vendor-part pricing sync (`VendPartSvc`) → populates `PriceList`/`PriceBreak`. *Epicor has no price-list service, so this reconciles vendor-part rows into one list per supplier, with the flat base price becoming the quantity-1 break — without which a flat-priced part imports with no price and the PO-create prefill has nothing to prefill from.*
+- [x] Updatable BAQ layer for write-back instead of raw BO calls. *`ZS-PO-Ack` and `ZS-PO-Sugg-Decision`, both overridable per connection. A missing BAQ reports itself by name rather than as a bare 404.*
+
+### Two things this phase added that weren't on the list
+
+Both were forced by rules the codebase already enforces, not chosen:
+
+- **`INTEGRATION_RECONNECT`, a real action item.** A `DEGRADED` connection withdraws every capability it was feeding, which turns features off silently — precisely the unowned state [product.md](product.md) calls a modeling bug, and `lifecycle.test.ts` failed the build over it. So a broken connection opens an item against an OWNER and is chased on the same dwell clock as a late PO. This closes the "nobody designed the Epicor-connected product" hole listed under [Known holes in this plan](#known-holes-in-this-plan) — by our own doctrine a stale ERP connection is an open action owned by someone, and now it is one.
+- **The chase guard on a first sync.** A backfill imports thousands of historical open orders. Minting a supplier-owned item for each would put every one into the next digest — a mass mailing to hundreds of companies about orders they may already have delivered, from a system they've never heard of, which is how a sending domain gets filtered. So a first sync opens internal items normally (the buyer's board *should* be full on day one) and no external ones; every later sync opens both. Same reasoning that killed the per-row nudge button in Phase 1b.
+
+### What's built, and what a pilot will move
+
+Written down now so it isn't rediscovered as a surprise:
+
+- **Service names are documented and stable; entity-set names and column spellings are not.** They vary by Kinetic version and by site customization. Every one of them is collected in `src/bo/endpoints.ts` (overridable per connection) or read through a candidate list (`field(row, "UnitCost", "DocUnitCost", …)`), so a first real instance should be a config change or one array entry — not a forked mapper. That is the design betting on being partly wrong, which is the right bet here.
+- **The two Updatable BAQs don't exist anywhere yet.** They are ours to author and a customer's to import. Nothing writes back until they do, and the failure message says so.
+- **No load or perf evidence.** Paging, chunked child fetches and per-page commits are all in, and none of it has met a real dataset. That's Phase 5's "load/perf pass on Epicor sync paths".
+- **`ChangeDate` is assumed as the incremental watermark** on suppliers, POs and vendor parts. Where an instance doesn't populate it, that resource silently degrades to a full pull rather than breaking — slower, still correct.
 
 ## Phase 3 — Okta integration (`integrations/idp/okta`)
 
@@ -290,7 +309,16 @@ Surfaced by the judges attacking the proposals. Not scoped above, and each is re
 
 - [ ] Security review of multi-tenant auth boundaries: internal SSO, external app-native auth, and SCIM token scoping in particular
 - [ ] Load/perf pass on Epicor sync paths
-- [ ] Identify a design-partner/pilot customer to validate the Epicor integration against a real Kinetic instance
+- [ ] Identify a design-partner/pilot customer to validate the Epicor integration against a real Kinetic instance — the connector is built and tested against a scripted transport as of 2026-08-19; [What's built, and what a pilot will move](#whats-built-and-what-a-pilot-will-move) lists exactly what a first real instance is expected to change.
+
+## Phase 6 — Deferred operational decisions
+
+Parked here on 2026-08-19 so they stop resurfacing as open questions. **None of these block Phase 2**: the dev mailbox
+covers the whole email loop for development and demos, and the Phase 4 pricing placeholder was always the plan.
+
+- [ ] **Email provider** behind the existing `EmailSender` interface (`apps/platform/src/lib/email/sender.ts`). While `EMAIL_PROVIDER` is unset, outbound mail is captured to `CapturedEmail` and rendered at `/dashboard/emails`; setting it currently throws, because no real sender is implemented. The chase is this product's core mechanic and it does not yet leave the building — that's the reason this is a phase and not a backlog note.
+- [ ] **Hosting + scheduling platform** — one decision, twice over: the daily digest needs something to trigger `runReminderJob` on a cadence. `npm run send-reminders`, and the button on `/dashboard/emails`, are the stand-ins.
+- [ ] **Pricing model** — flat SaaS tiers, custom/negotiated like SourceDay (~$30K–500K/yr), or plan-based like Axya. Phase 4 ships "Call for pricing" either way; this is what eventually replaces it.
 
 ## Decided
 
@@ -312,7 +340,7 @@ Surfaced by the judges attacking the proposals. Not scoped above, and each is re
 
 ## Open questions for you
 
-- **Pricing strategy**: still open by design. For now the homepage pricing page ships with a placeholder ("Coming soon" / "Call for pricing") rather than real numbers — revisit whether the eventual model is flat SaaS tiers, custom/negotiated like SourceDay (~$30K–500K/yr), or plan-based like Axya.
 - **ERP #2 / IdP #2**: still open. Even a rough target for each would help validate that the capability-registry and IdP-broker abstractions in [docs/architecture.md](architecture.md) and [docs/integrations.md](integrations.md) generalize past a single example instead of quietly being Epicor/Okta-shaped.
 - **Data-model gaps surfaced while drafting the schema**: the exact RFQ status enum, whether an awarded RFQ auto-creates a PurchaseOrder, and the Item/part identity strategy (denormalized strings vs. a dedicated `Item` entity). Full detail: [docs/data-model.md#open-questions-this-doc-surfaces](data-model.md#open-questions-this-doc-surfaces).
-- **Hosting/scheduling platform + email provider**: not chosen yet. The dev mailbox (see [Decided](#decided)) unblocks development and demos — outbound email is captured in-app with clickable action links — but real delivery still needs a provider behind the existing `EmailSender` interface, and the daily digest still needs a scheduler to trigger it. `npm run send-reminders` (or the button on `/dashboard/emails`) runs the job on demand in the meantime.
+
+*Pricing, the email provider and the scheduler moved to [Phase 6](#phase-6--deferred-operational-decisions) on 2026-08-19 — scheduled, not open.*
