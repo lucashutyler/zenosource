@@ -84,6 +84,7 @@ test("every route renders clean for an owner", async ({ page }) => {
     ["locations", "/dashboard/locations"],
     ["location new", "/dashboard/locations/new"],
     ["team", "/dashboard/team"],
+    ["integrations", "/dashboard/integrations"],
     ["emails", "/dashboard/emails"],
     ["about", "/about"],
     ...(poId ? ([["po detail", `/dashboard/purchase-orders/${poId}`]] as [string, string][]) : []),
@@ -114,6 +115,25 @@ test("every route renders clean for an owner", async ({ page }) => {
   expect(problems, `console errors:\n${problems.join("\n")}`).toHaveLength(0);
 });
 
+test("a feature nobody supplies does not exist, rather than rendering empty", async ({ page }) => {
+  // /dashboard/po-suggestions is deliberately absent from ROUTES above: the
+  // seeded tenant has no ERP connected, so the route notFound()s. That is the
+  // capability model working, and it belongs in the smoke sweep as its own
+  // assertion rather than as a missing line someone later "fixes" by adding
+  // the route to the list and wondering why it fails.
+  const problems = watchConsole(page);
+  await loginAs(page, "buyer@acme.test", "zenosource-dev");
+
+  await page.goto("/dashboard/po-suggestions");
+  await expect(page.getByText("Nothing here.")).toBeVisible();
+
+  // And the nav doesn't advertise it either.
+  await page.goto("/dashboard");
+  await expect(page.getByRole("link", { name: "PO suggestions" })).toHaveCount(0);
+
+  expect(problems, `console errors:\n${problems.join("\n")}`).toHaveLength(0);
+});
+
 test("every route a member can reach renders clean, and none leak scope", async ({ page }) => {
   const problems = watchConsole(page);
   await loginAs(page, "casey@acme.test", "zenosource-dev");
@@ -132,6 +152,10 @@ test("every route a member can reach renders clean, and none leak scope", async 
     "/dashboard/locations",
     "/dashboard/locations/new",
     "/dashboard/team",
+    // A MEMBER sees the integrations page read-only — no connect form, no
+    // disconnect. That branch is exactly where the audit kept finding forms
+    // that rendered in full and only refused on submit.
+    "/dashboard/integrations",
   ];
 
   const broken: string[] = [];

@@ -226,6 +226,21 @@ export const ACTION_COPY: Record<ActionItemType, ActionCopy> = {
     owes: "review the suggestion",
     external: "",
   },
+  // The only action item whose subject isn't a PO or an RFQ. docs/todo.md
+  // listed "nobody designed the Epicor-connected product" as a known hole and
+  // answered it in the same breath: "by our own doctrine a stale ERP
+  // connection is an open action owned by someone, so it belongs on the
+  // board." A broken connection withdraws the capabilities it was feeding,
+  // which turns features off silently — the exact modeling bug product.md
+  // names, one level up from a PO. So it is chased like everything else,
+  // ranked on the same dwell clock, and it is deliberately not a banner: a
+  // banner is dismissible and owned by nobody.
+  INTEGRATION_RECONNECT: {
+    side: "BUYER",
+    label: "Reconnect a broken integration",
+    owes: "reconnect it",
+    external: "",
+  },
 };
 
 /**

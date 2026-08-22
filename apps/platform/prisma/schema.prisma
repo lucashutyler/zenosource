@@ -27,15 +27,16 @@ model Tenant {
   // src/lib/document-number.ts), never by counting existing rows.
   nextDocumentNumber Int @default(10001)
 
-  internalUsers  InternalUser[]
-  suppliers      Supplier[]
-  priceLists     PriceList[]
-  purchaseOrders PurchaseOrder[]
-  rfqs           RFQ[]
-  poSuggestions  POSuggestion[]
-  actionItems    ActionItem[]
-  locations      Location[]
-  statusEvents   StatusEvent[]
+  internalUsers          InternalUser[]
+  suppliers              Supplier[]
+  priceLists             PriceList[]
+  purchaseOrders         PurchaseOrder[]
+  rfqs                   RFQ[]
+  poSuggestions          POSuggestion[]
+  actionItems            ActionItem[]
+  locations              Location[]
+  statusEvents           StatusEvent[]
+  integrationConnections IntegrationConnection[]
 }
 
 enum InternalUserRole {
@@ -54,10 +55,11 @@ model InternalUser {
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
-  cancelledPurchaseOrders PurchaseOrder[]        @relation("POCancelledBy")
-  actionItems             ActionItem[]           @relation("ActionItemInternalOwner")
-  resolvedActionItems     ActionItem[]           @relation("ActionItemResolvedBy")
+  cancelledPurchaseOrders PurchaseOrder[]         @relation("POCancelledBy")
+  actionItems             ActionItem[]            @relation("ActionItemInternalOwner")
+  resolvedActionItems     ActionItem[]            @relation("ActionItemResolvedBy")
   locations               InternalUserLocation[]
+  integrationConnections  IntegrationConnection[] @relation("IntegrationConnectedBy")
 
   @@unique([tenantId, email])
 }
@@ -530,6 +532,7 @@ enum ActionItemSubjectType {
   PURCHASE_ORDER_LINE
   RFQ
   PO_SUGGESTION
+  INTEGRATION_CONNECTION
 }
 
 // Every non-terminal state of a PO or RFQ maps to exactly one of these, and
@@ -561,6 +564,12 @@ enum ActionItemType {
   // silently goes nowhere.
   RFQ_RAISE_PO_FROM_AWARD
   PO_SUGGESTION_REVIEW
+  // Buyer owes: repair a broken ERP/IdP connection. docs/todo.md named the
+  // absence of this as a known hole — "by our own doctrine a stale ERP
+  // connection is an open action owned by someone, so it belongs on the
+  // board." A DEGRADED connection silently starving every downstream feature
+  // is exactly the unowned state product.md calls a modeling bug.
+  INTEGRATION_RECONNECT
 }
 
 enum ActionItemOwnerType {
@@ -688,4 +697,154 @@ model CapturedEmail {
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// --- Integrations ----------------------------------------------------------
+//
+// The persistent half of the capability model in ../../docs/architecture.md
+// #extensibility--capability-model. The *declarations* — which integrations
+// exist, which capabilities each provides, which features need which
+// capability — are code, not rows: they ship with the build, they're the same
+// for every tenant, and putting them in the database would mean a migration
+// to add a feature flag. See src/lib/integrations/registry.ts.
+//
+// What is per-tenant, and therefore lives here: whether this tenant has
+// actually connected a given integration, the credentials it connected with,
+// and whether those credentials still work. That last part is what turns the
+// registry from a static list into a gate — a tenant's live capability set is
+// derived from the CONNECTED rows below, so a connection going bad withdraws
+// the features it was feeding.
+
+enum IntegrationConnectionStatus {
+  // Configured and last known to work. The only status that grants
+  // capabilities — see capabilitiesForTenant().
+  CONNECTED
+  // Configured, but the most recent health check failed. Capabilities are
+  // withdrawn (a feature reading stale ERP data is worse than an absent
+  // one) and an INTEGRATION_RECONNECT action item is opened against an
+  // OWNER, because nothing else in the product would tell anyone.
+  DEGRADED
+  // Explicitly disconnected by the tenant. Config is kept so reconnecting
+  // isn't a re-onboarding, but secrets are wiped.
+  DISCONNECTED
+}
+
+// Epicor's Kinetic REST API needs *two* independent credentials on every
+// call — an API Key tied to an Access Scope, and an identity credential
+// (Basic, or a Bearer token from TokenResource.svc). docs/integrations.md
+// #epicor-erp: "Missing either fails differently — the connection-health
+// check and onboarding flow need to distinguish the two failure modes, not
+// report one generic 'auth failed.'" A buyer's IT admin can fix exactly one
+// of these, and telling them the wrong one costs a support cycle.
+enum IntegrationHealthFailure {
+  NONE
+  // The API key was missing, revoked, or its Access Scope doesn't cover the
+  // services we call. Fixed in Epicor's API Key Maintenance.
+  API_KEY
+  // The API key was accepted; the user/password or OAuth2 token was not.
+  // Fixed by re-entering the service account, not by touching the key.
+  IDENTITY
+  // Neither credential was ever judged — DNS, TLS, timeout, 5xx. Nothing is
+  // wrong with the tenant's setup and re-entering credentials won't help.
+  UNREACHABLE
+  // Reachable and authenticated, but pointed somewhere wrong — bad base URL
+  // or company id, or a BO/BAQ we require isn't present on this instance.
+  CONFIGURATION
+}
+
+model IntegrationConnection {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  // Matches an id in the code registry (`epicor`, `okta`). Deliberately a
+  // string and not an enum: adding an integration must not be a migration,
+  // which is the whole promise of ../../docs/architecture.md's "a new
+  // integration should only ever need to implement its own subproject,
+  // declare its capabilities, and map its data."
+  integrationId String
+  status        IntegrationConnectionStatus @default(DISCONNECTED)
+
+  // Non-secret connection settings, shape owned and validated by the
+  // integration itself (Epicor: base URL, company, auth mode). Opaque here
+  // for the same reason integrationId is a string.
+  config Json?
+
+  // Secrets, AES-256-GCM sealed with INTEGRATION_SECRET_KEY — never the
+  // plaintext. This is a shared multi-tenant database holding what is
+  // usually an ERP service account, so plaintext-at-rest would be the single
+  // worst row in the schema. src/lib/integrations/secrets.ts owns the format
+  // and documents what this does and doesn't protect against; Phase 5's
+  // security review is where a real KMS/envelope scheme gets decided.
+  secretsSealed String?
+
+  connectedAt       DateTime?
+  connectedByUserId String?
+  connectedByUser   InternalUser? @relation("IntegrationConnectedBy", fields: [connectedByUserId], references: [id])
+
+  // Health. lastHealthyAt is kept separately from lastCheckedAt so "broken
+  // for six hours" and "broken since March" are distinguishable — the chase
+  // ranks by dwell, and a connection is chased on the same clock as
+  // everything else.
+  lastCheckedAt DateTime?
+  lastHealthyAt DateTime?
+  healthFailure IntegrationHealthFailure @default(NONE)
+  // Operator-facing detail behind the failure mode: the BO that 404'd, the
+  // status line, the scope that was missing. Never rendered to suppliers.
+  healthDetail  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  syncRuns IntegrationSyncRun[]
+
+  // One connection per integration per tenant. A second Epicor connection
+  // would mean two sources of truth for the same PO.
+  @@unique([tenantId, integrationId])
+  @@index([tenantId])
+  @@index([status])
+}
+
+enum IntegrationSyncOutcome {
+  RUNNING
+  SUCCEEDED
+  // Finished, but individual records failed to map or persist. The run is
+  // still useful — partial sync beats none — but the count is surfaced.
+  PARTIAL
+  FAILED
+}
+
+// One row per resource per sync attempt. Exists for the same reason
+// StatusEvent does: "when did this last actually work, and what did it do"
+// is not recoverable from the current state of the mirrored rows. It is also
+// what Phase 5's "load/perf pass on Epicor sync paths" measures against.
+model IntegrationSyncRun {
+  id           String                @id @default(cuid())
+  connectionId String
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  // `suppliers`, `purchase_orders`, `price_lists`, `po_suggestions` — the
+  // canonical resource, not the vendor's BO name. Epicor's VendorSvc is an
+  // implementation detail that must not surface in platform tables.
+  resource String
+
+  startedAt  DateTime               @default(now())
+  finishedAt DateTime?
+  outcome    IntegrationSyncOutcome @default(RUNNING)
+
+  created Int @default(0)
+  updated Int @default(0)
+  skipped Int @default(0)
+  failed  Int @default(0)
+
+  // First failure's message, truncated. Full detail belongs in logs, not in
+  // a row every tenant's admin page reads.
+  error String?
+
+  // Cursor for the next incremental pull — Epicor's ChangedDate watermark.
+  // Stored per resource because the BOs move at wildly different rates:
+  // suppliers change monthly, PO releases change hourly.
+  watermark DateTime?
+
+  @@index([connectionId, resource, startedAt])
 }

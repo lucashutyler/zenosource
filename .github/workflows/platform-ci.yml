@@ -5,10 +5,16 @@ on:
     branches: [main]
     paths:
       - "apps/platform/**"
+      # The platform imports the Epicor connector as a file: dependency, so a
+      # change there can break this build. Without this path the connector's
+      # own job would pass, the platform's would never run, and main would go
+      # red on the next unrelated commit.
+      - "integrations/erp/epicor/**"
       - ".github/workflows/platform-ci.yml"
   pull_request:
     paths:
       - "apps/platform/**"
+      - "integrations/erp/epicor/**"
       - ".github/workflows/platform-ci.yml"
 
 defaults:
@@ -23,6 +29,10 @@ defaults:
 env:
   TEST_DATABASE_URL: "postgresql://zenosource:zenosource@localhost:5434/zenosource_test?schema=public"
   TEST_SESSION_SECRET: "ci-test-secret-not-for-production-use"
+  # Seals IntegrationConnection.secretsSealed (src/lib/integrations/secrets.ts).
+  # 32 bytes of base64, throwaway — the connections it would protect in CI are
+  # fixtures pointing at a scripted transport, not a real Epicor instance.
+  TEST_INTEGRATION_SECRET_KEY: "Y2ktdGVzdC1rZXktbm90LWZvci1wcm9kdWN0aW9uLXVzZSE="
 
 jobs:
   typecheck-and-lint:
@@ -64,6 +74,27 @@ jobs:
           SHADOW_DATABASE_URL: "postgresql://zenosource:zenosource@localhost:5434/zenosource_shadow?schema=public"
         run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
 
+  # The Epicor connector is a standalone package with no database and no
+  # network: its whole test suite runs against a scripted transport, because
+  # there is no Kinetic instance in CI and won't be before a pilot customer
+  # (docs/todo.md Phase 5). Fast, and it gates the platform job below by
+  # failing first on anything structural.
+  epicor-connector:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/erp/epicor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: integrations/erp/epicor/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
   unit-tests:
     runs-on: ubuntu-latest
     services:
@@ -93,6 +124,7 @@ jobs:
           echo "DATABASE_URL=\"${TEST_DATABASE_URL}\"" > .env.test
           echo "SESSION_SECRET=\"${TEST_SESSION_SECRET}\"" >> .env.test
           echo "APP_BASE_URL=\"http://localhost:3100\"" >> .env.test
+          echo "INTEGRATION_SECRET_KEY=\"${TEST_INTEGRATION_SECRET_KEY}\"" >> .env.test
       - run: npx prisma generate
       # `migrate deploy`, not `db push` — CI is the thing that catches a
       # schema change that never got a migration file.
@@ -128,6 +160,7 @@ jobs:
           echo "DATABASE_URL=\"${TEST_DATABASE_URL}\"" > .env.test
           echo "SESSION_SECRET=\"${TEST_SESSION_SECRET}\"" >> .env.test
           echo "APP_BASE_URL=\"http://localhost:3100\"" >> .env.test
+          echo "INTEGRATION_SECRET_KEY=\"${TEST_INTEGRATION_SECRET_KEY}\"" >> .env.test
       - run: npx prisma generate
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e

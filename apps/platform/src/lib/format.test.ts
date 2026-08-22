@@ -3,6 +3,7 @@ import {
   ageStep,
   daysBetween,
   formatDate,
+  formatDueIn,
   formatDwell,
   formatMoney,
   formatMoneyCompact,
@@ -110,5 +111,28 @@ describe("money and quantities", () => {
   it("renders a missing amount as an em dash, never as zero", () => {
     expect(formatMoney(null)).toBe("—");
     expect(formatQuantity(undefined)).toBe("—");
+  });
+});
+
+describe("formatDueIn", () => {
+  const now = new Date("2026-08-19T12:00:00.000Z");
+
+  it("distinguishes a deadline behind you from one ahead", () => {
+    // The distinction dwell can't make. "12d" for both "needed twelve days
+    // ago" and "needed in twelve days" collapses the only fact that decides
+    // whether to act today.
+    expect(formatDueIn(new Date("2026-08-07T12:00:00.000Z"), now)).toBe("12d ago");
+    expect(formatDueIn(new Date("2026-08-31T12:00:00.000Z"), now)).toBe("in 12d");
+  });
+
+  it("says today for anything inside a day, in either direction", () => {
+    expect(formatDueIn(now, now)).toBe("today");
+    expect(formatDueIn(new Date("2026-08-19T20:00:00.000Z"), now)).toBe("today");
+    expect(formatDueIn(new Date("2026-08-19T04:00:00.000Z"), now)).toBe("today");
+  });
+
+  it("switches to weeks past 28 days, the same as dwell", () => {
+    expect(formatDueIn(new Date("2026-10-19T12:00:00.000Z"), now)).toBe("in 8w");
+    expect(formatDueIn(new Date("2026-06-19T12:00:00.000Z"), now)).toBe("8w ago");
   });
 });
