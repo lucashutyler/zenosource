@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { createHash, randomBytes as cryptoRandomBytes } from "node:crypto";
+import { sealSecrets, sealingIsConfigured } from "../src/lib/integrations/secret-box";
 import type {
   PurchaseOrderStatus,
   PurchaseOrderLineStatus,
@@ -130,6 +132,17 @@ async function main() {
   await db.capturedEmail.deleteMany();
   await db.statusEvent.deleteMany();
   await db.actionItem.deleteMany();
+  // Phase 3's directory tables. Ordered so every foreign key target is
+  // deleted later: group members and group-location grants reference
+  // InternalUser and Location (both further down), and InternalUserLocation's
+  // grantedByGroupId is ON DELETE SET NULL, so groups can go before it.
+  await db.directoryEvent.deleteMany();
+  await db.directoryGroupMember.deleteMany();
+  await db.directoryGroupLocation.deleteMany();
+  await db.directoryGroup.deleteMany();
+  await db.directoryToken.deleteMany();
+  await db.ssoAuthRequest.deleteMany();
+  await db.tenantDomain.deleteMany();
   await db.integrationSyncRun.deleteMany();
   await db.integrationConnection.deleteMany();
   await db.pOSuggestion.deleteMany();
@@ -151,7 +164,9 @@ async function main() {
   await db.internalUser.deleteMany();
   await db.tenant.deleteMany();
 
-  const tenant = await db.tenant.create({ data: { name: "Acme Manufacturing (demo)" } });
+  const tenant = await db.tenant.create({
+    data: { name: "Acme Manufacturing (demo)", slug: "acme" },
+  });
 
   // Document numbers come out of the tenant's own sequence, exactly as they
   // do at runtime — so the seeded data is indistinguishable from data the app
@@ -1112,6 +1127,76 @@ async function main() {
     }
   }
 
+  // --- Single sign-on and directory provisioning, locally, with no Okta org --
+  //
+  // The same shape as the dev mailbox: the whole loop works without the thing
+  // it would normally need. `npm run fake-idp` starts a scripted identity
+  // provider on port 3101 — outside this app, in its own process, so there is
+  // no flag anyone can forget that would expose a credential-minting endpoint
+  // in production — and this connection points at it.
+  //
+  // Skipped without a sealing key, and it says why. The alternative would be
+  // storing a client secret in plaintext in the one row this codebase is most
+  // careful about, which is a worse thing to teach by example than a missing
+  // demo.
+  await db.tenantDomain.create({
+    data: { tenantId: tenant.id, domain: "acme.test", verifiedAt: NOW },
+  });
+
+  let ssoNotes: string;
+  if (sealingIsConfigured()) {
+    const connection = await db.integrationConnection.create({
+      data: {
+        tenantId: tenant.id,
+        integrationId: "okta",
+        status: "CONNECTED",
+        config: {
+          protocol: "OIDC",
+          issuer: "http://localhost:3101",
+          clientId: "0oaZENOSOURCE",
+          verifiedCapabilities: ["sso_oidc", "scim_provisioning"],
+          credentialExpiresAt: null,
+        },
+        secretsSealed: sealSecrets({ clientSecret: "zenosource-dev-secret" }),
+        connectedAt: NOW,
+        connectedByUserId: owner.id,
+        lastCheckedAt: NOW,
+        lastHealthyAt: NOW,
+        healthFailure: "NONE",
+      },
+    });
+
+    // Generated fresh every seed and never committed. A checked-in credential
+    // that grants tenant-wide directory write is precisely what the guard at
+    // the top of e2e/global-setup.ts exists to prevent one class of.
+    const directoryToken = `zs_dir_${cryptoRandomBytes(32).toString("base64url")}`;
+    await db.directoryToken.create({
+      data: {
+        tenantId: tenant.id,
+        connectionId: connection.id,
+        name: "Local development",
+        tokenHash: createHash("sha256").update(directoryToken, "utf8").digest("hex"),
+        tokenHint: `${"\u2022".repeat(6)}${directoryToken.slice(-4)}`,
+        createdByUserId: owner.id,
+      },
+    });
+
+    ssoNotes =
+      "\nSingle sign-on (dev): a scripted identity provider, no Okta org needed." +
+      "\n  1. npm run fake-idp        (starts it on http://localhost:3101)" +
+      "\n  2. http://localhost:3000/login/sso, then any @acme.test address" +
+      "\n  Settings, and the three URLs a real Okta admin would need:" +
+      "\n    http://localhost:3000/dashboard/integrations/sso" +
+      `\n\nDirectory provisioning (dev): ${directoryToken}` +
+      "\n  curl -H \"Authorization: Bearer <token>\" http://localhost:3000/api/scim/v2/Users";
+  } else {
+    ssoNotes =
+      "\nSingle sign-on (dev): skipped — INTEGRATION_SECRET_KEY isn't set, and a client" +
+      "\n  secret is not going into the database unsealed. Generate one with:" +
+      "\n    node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"" +
+      "\n  put it in .env as INTEGRATION_SECRET_KEY, and re-seed.";
+  }
+
   // Leave the tenant's sequence where the seeded documents finished, so the
   // first number the app allocates continues rather than colliding.
   await db.tenant.update({
@@ -1139,6 +1224,7 @@ async function main() {
   console.log("Internal login: http://localhost:3000/login");
   console.log("  OWNER (sees both locations):  buyer@acme.test / zenosource-dev");
   console.log("  MEMBER (Chicago only):        casey@acme.test / zenosource-dev");
+  console.log(ssoNotes);
   console.log(
     `\nExternal action view (no login): http://localhost:3000/a/${externalActionItem.accessToken}\n`
   );

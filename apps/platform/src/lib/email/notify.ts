@@ -33,7 +33,7 @@ function baseUrl(): string {
  */
 async function replyToFor(tenantId: string): Promise<{ name: string; email: string } | null> {
   const owner = await db.internalUser.findFirst({
-    where: { tenantId, role: "OWNER" },
+    where: { tenantId, role: "OWNER", status: "ACTIVE" },
     select: { name: true, email: true },
     orderBy: { createdAt: "asc" },
   });

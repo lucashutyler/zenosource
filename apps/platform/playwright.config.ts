@@ -13,12 +13,36 @@ export default defineConfig({
     baseURL: "http://localhost:3100",
     trace: "retain-on-failure",
   },
-  webServer: {
-    command: "dotenv -e .env.test -- next dev -p 3100",
-    url: "http://localhost:3100/login",
-    reuseExistingServer: false,
-    timeout: 60_000,
-    env: { E2E_DIST_DIR: ".next-e2e" }, // separate build dir — see next.config.ts
-  },
+  webServer: [
+    {
+      command: "dotenv -e .env.test -- next dev -p 3100",
+      url: "http://localhost:3100/login",
+      reuseExistingServer: false,
+      timeout: 60_000,
+      env: { E2E_DIST_DIR: ".next-e2e" }, // separate build dir — see next.config.ts
+    },
+    {
+      // The scripted identity provider the federated sign-in specs run
+      // against — the same one `npm run fake-idp` starts for local
+      // development, and the same one prisma/seed.ts points the seeded
+      // connection at.
+      //
+      // A webServer rather than something started in globalSetup, because
+      // Playwright owns the lifetime here: it waits for the URL below before
+      // any test runs and tears it down afterwards. Started from globalSetup
+      // it was up when setup logged it and gone by the time a browser tried
+      // to reach it, which reads as a broken sign-in rather than as a missing
+      // fixture — and cost an hour to see.
+      //
+      // Deliberately a separate process and not a route inside the app: an
+      // endpoint that mints signed assertions and ships with the product is an
+      // authentication bypass behind an environment check, and environment
+      // checks get forgotten exactly once.
+      command: "dotenv -e .env.test -- tsx scripts/fake-idp.ts",
+      url: "http://localhost:3101/.well-known/openid-configuration",
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+  ],
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

@@ -12,7 +12,7 @@ import type {
   ErpConnector,
   SyncResource,
 } from "./contract";
-import { getConnector } from "./connectors";
+import { getErpConnector } from "./connectors";
 import { getIntegration } from "./registry";
 import { recordHealth, sessionFor } from "./connections";
 import type { IntegrationConnection } from "@/generated/prisma/client";
@@ -60,7 +60,7 @@ export async function runSync(params: {
    * runReminderJob taking its db and sender as parameters: this has to run
    * identically from a server action, a scheduled job, and a test with a
    * scripted transport and no ERP anywhere. Omitted in every production
-   * caller, which resolves through getConnector().
+   * caller, which resolves through getErpConnector().
    */
   connector?: ErpConnector;
 }): Promise<SyncSummary> {
@@ -77,8 +77,15 @@ export async function runSync(params: {
     );
   }
 
-  const connector = params.connector ?? getConnector(integrationId);
   const definition = getIntegration(integrationId);
+  if (definition?.type === "idp") {
+    // Reachable only by someone constructing the call by hand, but the
+    // message matters: "no connector is registered for okta" would send
+    // whoever reads it looking for a missing registration that is not missing.
+    throw new Error(`${definition.name} is an identity provider — there is nothing to sync.`);
+  }
+
+  const connector = params.connector ?? getErpConnector(integrationId);
   if (!connector || !definition) throw new Error(`No connector is registered for ${integrationId}.`);
 
   const session = sessionFor(connection);

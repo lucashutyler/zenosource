@@ -68,6 +68,10 @@ export async function pickInternalOwner(
     });
     if (assignment) return assignment.internalUserId;
   }
-  const owner = await db.internalUser.findFirst({ where: { tenantId, role: "OWNER" } });
+  const owner = await db.internalUser.findFirst({
+    where: { tenantId, role: "OWNER", status: "ACTIVE" },
+    select: { id: true },
+    orderBy: { createdAt: "asc" },
+  });
   return owner?.id ?? null;
 }

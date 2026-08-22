@@ -22,7 +22,12 @@ export default async function TeamPage() {
   const isOwner = user.role === "OWNER";
 
   const members = await db.internalUser.findMany({
-    where: { tenantId: user.tenantId },
+    // Active only. Somebody who has been stepped down — by an owner here or by
+    // the organization's directory — is not on the team, and listing them
+    // would put them in the successor dropdown as a candidate to hand work to.
+    // Their row stays (every order they issued points at it) and what happened
+    // is in DirectoryEvent; this page is "who is here now".
+    where: { tenantId: user.tenantId, status: "ACTIVE" },
     include: {
       _count: { select: { actionItems: { where: { status: "OPEN" } } } },
       locations: { include: { location: { select: { name: true } } } },

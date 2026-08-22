@@ -2,15 +2,16 @@ import type { Metadata } from "next";
 import { getCurrentInternalUser } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { formatDate, formatDwell, plural } from "@/lib/format";
-import { Callout, EmptyState, Panel, PageHeader, StatusChip } from "@/components/ui";
+import { Callout, EmptyState, LinkButton, Panel, PageHeader, StatusChip } from "@/components/ui";
 import { SimpleAction } from "@/components/simple-action";
 import { INTEGRATIONS } from "@/lib/integrations/registry";
 import { FEATURES, FEATURE_IDS, featureIsUnlocked } from "@/lib/integrations/capabilities";
 import type { Capability } from "@/lib/integrations/capabilities";
-import { capabilitiesForTenant } from "@/lib/integrations/connections";
-import { hasConnector } from "@/lib/integrations/connectors";
+import { capabilitiesForTenant, credentialExpiryOf } from "@/lib/integrations/connections";
+import { isImplemented } from "@/lib/integrations/connectors";
 import { disconnectIntegration, recheckIntegration, syncIntegration } from "@/app/actions/integrations";
 import { EpicorConnectForm } from "./epicor-form";
+import { OktaConnectForm } from "./okta-form";
 
 export const metadata: Metadata = { title: "Integrations" };
 
@@ -50,8 +51,9 @@ export default async function IntegrationsPage() {
       {user.role !== "OWNER" && (
         <div className="mb-6">
           <Callout title="Read-only for you">
-            Connecting an ERP means storing credentials that can read and write orders across the
-            whole company, so only an owner can change what&apos;s here.
+            Connecting an integration means storing credentials that can read and write orders
+            across the whole company, or decide who is allowed to sign in, so only an owner can
+            change what&apos;s here.
           </Callout>
         </div>
       )}
@@ -59,8 +61,9 @@ export default async function IntegrationsPage() {
       <div className="space-y-4">
         {INTEGRATIONS.map((integration) => {
           const connection = byId.get(integration.id);
-          const buildable = hasConnector(integration.id);
+          const buildable = isImplemented(integration.id);
           const status = connection?.status ?? "DISCONNECTED";
+          const credentialExpiresAt = connection ? credentialExpiryOf(connection) : null;
 
           return (
             <Panel key={integration.id} className="p-5">
@@ -98,7 +101,7 @@ export default async function IntegrationsPage() {
                       label="Test connection"
                       pendingLabel="Testing…"
                     />
-                    {status === "CONNECTED" && (
+                    {status === "CONNECTED" && integration.type === "erp" && (
                       <SimpleAction
                         action={syncIntegration.bind(null, formDataFor(integration.id))}
                         label="Sync now"
@@ -106,29 +109,49 @@ export default async function IntegrationsPage() {
                         pendingLabel="Syncing…"
                       />
                     )}
+                    {integration.type === "idp" && (
+                      <LinkButton href="/dashboard/integrations/sso" variant="secondary">
+                        Single sign-on settings
+                      </LinkButton>
+                    )}
                     <SimpleAction
                       action={disconnectIntegration.bind(null, formDataFor(integration.id))}
                       label="Disconnect"
                       variant="quiet"
                       confirm={{
                         title: `Disconnect ${integration.name}?`,
-                        body: (
-                          <>
-                            <p>
-                              The features it supplies —{" "}
-                              {integration.capabilities
-                                .map((c) => CAPABILITY_LABEL[c as Capability] ?? c)
-                                .join(", ")}{" "}
-                              — turn off for everyone in {""}
-                              your organization until it&apos;s reconnected.
-                            </p>
-                            <p className="mt-2">
-                              Orders and suppliers already mirrored here stay exactly as they are.
-                              They just stop being updated, and the stored credentials are erased —
-                              reconnecting asks for them again.
-                            </p>
-                          </>
-                        ),
+                        body:
+                          integration.type === "idp" ? (
+                            <>
+                              <p>
+                                Nobody is signed out — existing sessions run until they expire. What
+                                stops is signing in through {integration.name}, and your directory
+                                creating or removing people here.
+                              </p>
+                              <p className="mt-2">
+                                Everyone keeps their account, their role and their locations, and
+                                anyone without a password will need one set before they can get back
+                                in. Every directory token is revoked, and the stored credentials are
+                                erased — reconnecting asks for them again.
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p>
+                                The features it supplies —{" "}
+                                {integration.capabilities
+                                  .map((c) => CAPABILITY_LABEL[c as Capability] ?? c)
+                                  .join(", ")}{" "}
+                                — turn off for everyone in your organization until it&apos;s
+                                reconnected.
+                              </p>
+                              <p className="mt-2">
+                                Orders and suppliers already mirrored here stay exactly as they are.
+                                They just stop being updated, and the stored credentials are erased —
+                                reconnecting asks for them again.
+                              </p>
+                            </>
+                          ),
                         confirmLabel: "Disconnect",
                       }}
                     />
@@ -139,16 +162,27 @@ export default async function IntegrationsPage() {
               {connection && status === "DEGRADED" && (
                 <div className="mt-4">
                   <Callout title="This connection isn't working">
-                    <p>{connection.healthDetail ?? "Epicor rejected the connection."}</p>
+                    <p>
+                      {connection.healthDetail ?? `${integration.name} rejected the connection.`}
+                    </p>
                     <p className="mt-2 text-ink-faint">
                       {connection.lastHealthyAt
                         ? `Last worked ${formatDwell(connection.lastHealthyAt)} ago, on ${formatDate(connection.lastHealthyAt)}.`
                         : "It has never completed a successful check."}{" "}
-                      Everything it supplies is switched off until it does — a feature reading data
-                      that stopped updating is worse than one that isn&apos;t there.
+                      {integration.type === "idp"
+                        ? "Signing in and directory provisioning both keep working while you fix it — an assertion is verified when it arrives, so there is nothing here that can go stale, and locking your team out of the product to signal our own broken check would be the wrong trade."
+                        : "Everything it supplies is switched off until it does — a feature reading data that stopped updating is worse than one that isn't there."}
                     </p>
                   </Callout>
                 </div>
+              )}
+
+              {credentialExpiresAt && status !== "DISCONNECTED" && (
+                <p className="mt-4 border-t border-rule pt-3 text-sm text-ink-soft">
+                  The signing certificate this connection trusts runs out on{" "}
+                  {formatDate(credentialExpiresAt)}. Upload the replacement before then — nothing
+                  here will chase you about it, and sign-in stops the day it expires.
+                </p>
               )}
 
               {connection && status === "CONNECTED" && (
@@ -213,7 +247,15 @@ export default async function IntegrationsPage() {
 
               {user.role === "OWNER" && buildable && status !== "CONNECTED" && (
                 <div className="mt-4 border-t border-rule pt-4">
-                  <EpicorConnectForm integrationId={integration.id} />
+                  {/* Dispatched on the integration's own type. Rendering one
+                      form for every integration worked while there was one;
+                      with two it would put an ERP's server URL and company id
+                      in front of somebody connecting an identity provider. */}
+                  {integration.type === "idp" ? (
+                    <OktaConnectForm integrationId={integration.id} />
+                  ) : (
+                    <EpicorConnectForm integrationId={integration.id} />
+                  )}
                 </div>
               )}
             </Panel>

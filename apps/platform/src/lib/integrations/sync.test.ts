@@ -33,7 +33,7 @@ function connectorReturning(routes: { match: string; body: unknown }[]) {
 }
 
 async function setup() {
-  const tenant = await db.tenant.create({ data: { name: "Acme Manufacturing" } });
+  const tenant = await db.tenant.create({ data: { name: "Acme Manufacturing", slug: "sync-acme" } });
   await db.internalUser.create({
     data: {
       tenantId: tenant.id,

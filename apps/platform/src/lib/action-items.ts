@@ -285,10 +285,9 @@ export async function resolveActionItemContext(
         });
         break;
       }
-      default:
-        // PO_SUGGESTION has no page yet (Phase 2, Epicor-gated) — no link target.
+      case "PO_SUGGESTION":
         context.set(item.id, {
-          href: null,
+          href: "/dashboard/po-suggestions",
           entityLabel: "PO suggestion",
           identifier: null,
           supplierName: null,
@@ -296,6 +295,25 @@ export async function resolveActionItemContext(
           value: null,
           needByDate: null,
         });
+        break;
+
+      case "INTEGRATION_CONNECTION":
+        // These two used to fall through to a `default:` that labelled every
+        // non-document subject "PO suggestion" with no link. It was invisible
+        // while nothing had ever been DEGRADED, and Phase 3 makes it bite: the
+        // one item an owner most needs a single click to reach is a broken
+        // sign-in connection, and an unlabelled row that goes nowhere is not
+        // the "open action owned by someone" docs/architecture.md means.
+        context.set(item.id, {
+          href: "/dashboard/integrations",
+          entityLabel: "Integration",
+          identifier: null,
+          supplierName: null,
+          detail: null,
+          value: null,
+          needByDate: null,
+        });
+        break;
     }
   }
   return context;

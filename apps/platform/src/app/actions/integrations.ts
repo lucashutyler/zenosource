@@ -5,7 +5,7 @@ import { getCurrentInternalUser } from "@/lib/dal";
 import { db } from "@/lib/db";
 import { type FormState, fail, failWith } from "@/lib/form-state";
 import { getIntegration } from "@/lib/integrations/registry";
-import { getConnector } from "@/lib/integrations/connectors";
+import { getAnyConnector, getErpConnector } from "@/lib/integrations/connectors";
 import { connect, disconnect, recordHealth, sessionFor } from "@/lib/integrations/connections";
 import { sealingIsConfigured } from "@/lib/integrations/secrets";
 import { runSync } from "@/lib/integrations/sync";
@@ -39,7 +39,7 @@ export async function connectIntegration(
 
   const integrationId = String(formData.get("integrationId") ?? "");
   const definition = getIntegration(integrationId);
-  const connector = getConnector(integrationId);
+  const connector = getAnyConnector(integrationId);
   if (!definition || !connector) {
     return failWith(formData, "That integration isn't available in this build.");
   }
@@ -95,7 +95,7 @@ export async function recheckIntegration(formData: FormData): Promise<void> {
   if (user.role !== "OWNER") return;
 
   const integrationId = String(formData.get("integrationId") ?? "");
-  const connector = getConnector(integrationId);
+  const connector = getAnyConnector(integrationId);
   const connection = await db.integrationConnection.findUnique({
     where: { tenantId_integrationId: { tenantId: user.tenantId, integrationId } },
   });
@@ -185,7 +185,7 @@ export async function decideSuggestion(
       },
     },
   });
-  const connector = getConnector(suggestion.sourceIntegrationId);
+  const connector = getErpConnector(suggestion.sourceIntegrationId);
 
   let detail: string | undefined;
   if (decision === "ACCEPT") {

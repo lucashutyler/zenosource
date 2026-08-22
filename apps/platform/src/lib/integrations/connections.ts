@@ -3,6 +3,7 @@ import { cache } from "react";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { createActionItem, resolveOpenActionItemsFor } from "@/lib/action-items";
+import { revokeAllForConnection } from "@/lib/auth/directory-tokens";
 import type { Capability, FeatureId } from "./capabilities";
 import { CAPABILITIES, FEATURES, featureIsUnlocked, unlockedFeatures } from "./capabilities";
 import { getIntegration, INTEGRATIONS } from "./registry";
@@ -38,9 +39,11 @@ export const getConnectionsForTenant = cache(async (tenantId: string) => {
  * Every capability this tenant currently has, intersected with what the
  * connection actually verified. A capability is granted only when the
  * integration declares it *and* the last health check confirmed the instance
- * can serve it — an Epicor API key whose Access Scope omits POSuggSvc
- * connects fine and cannot supply `po_suggestions`, and unlocking the feature
- * anyway produces a screen that is empty forever with no explanation.
+ * can serve it. A partial grant is the normal case at a real customer — an
+ * ERP credential scoped to some of its services and not others connects
+ * perfectly well and still cannot supply everything the integration declares
+ * — and unlocking the feature anyway produces a screen that is empty forever
+ * with no explanation.
  */
 export const capabilitiesForTenant = cache(
   async (tenantId: string): Promise<Set<Capability>> => {
@@ -94,6 +97,26 @@ export async function requireFeature(tenantId: string, feature: FeatureId): Prom
   if (!(await isFeatureEnabled(tenantId, feature))) notFound();
 }
 
+/**
+ * When the credential behind a connection stops being valid, if it said.
+ *
+ * Deliberately read off the stored config rather than being a column: it is
+ * one nullable string that only some integrations have, and putting it in the
+ * schema would make it look like something the product acts on. It isn't —
+ * nothing branches on it, nothing is withdrawn because of it, and no action
+ * item is minted from it. It renders as a dated line, and that is all, because
+ * a certificate with twelve days left is not a broken connection and nothing
+ * runs on a cadence to notice one with twelve hours left. See docs/todo.md for
+ * what changes when there is a scheduler.
+ */
+export function credentialExpiryOf(connection: IntegrationConnection): Date | null {
+  const config = connection.config as { credentialExpiresAt?: unknown } | null;
+  const value = config?.credentialExpiresAt;
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 /** Which integrations a tenant could connect to unlock a locked feature. */
 export function integrationsUnlocking(feature: FeatureId) {
   const required = FEATURES[feature].requires;
@@ -114,6 +137,7 @@ export async function connect(params: {
   const config = {
     ...params.config,
     verifiedCapabilities: health.verifiedCapabilities ?? [],
+    credentialExpiresAt: health.credentialExpiresAt ?? null,
   };
   const now = new Date();
   const data = {
@@ -152,6 +176,11 @@ export async function disconnect(tenantId: string, integrationId: string) {
       healthDetail: null,
     },
   });
+  // Any directory credential this connection issued goes with it. The comment
+  // above says disconnecting exists so a disconnected integration stops being
+  // a credential at rest; a live token that can still deactivate users is
+  // exactly that, in the direction that matters most.
+  await revokeAllForConnection(connection.id);
   await resolveOpenActionItemsFor("INTEGRATION_CONNECTION", connection.id, {
     actionType: "INTEGRATION_RECONNECT",
   });
@@ -196,10 +225,14 @@ export async function recordHealth(connectionId: string, health: HealthReport) {
       healthDetail: health.detail ?? null,
       // Re-probing capabilities on every check matters: an admin narrowing an
       // API key's Access Scope is a silent feature withdrawal otherwise.
+      // Spread, never replaced: everything else on this blob is the
+      // integration's own connect-form config, and a wholesale write here
+      // would erase it on the first health check after connecting.
       config: health.verifiedCapabilities
         ? {
             ...((existing.config as Record<string, unknown>) ?? {}),
             verifiedCapabilities: health.verifiedCapabilities,
+            credentialExpiresAt: health.credentialExpiresAt ?? null,
           }
         : (existing.config ?? undefined),
     },
@@ -233,7 +266,7 @@ async function reconcileReconnectItem(connection: IntegrationConnection) {
     });
     if (open) return; // already being chased; don't reset its dwell clock
     const owner = await db.internalUser.findFirst({
-      where: { tenantId: connection.tenantId, role: "OWNER" },
+      where: { tenantId: connection.tenantId, role: "OWNER", status: "ACTIVE" },
       select: { id: true },
       orderBy: { createdAt: "asc" },
     });

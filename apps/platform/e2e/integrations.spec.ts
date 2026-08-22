@@ -17,14 +17,21 @@ test("an owner sees what's connected, what isn't, and what that costs them", asy
   await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Epicor Kinetic" })).toBeVisible();
 
-  // Okta is declared before Phase 3 builds it, precisely to show the registry
-  // isn't ERP-shaped — but it must not offer a connect button that fails.
+  // Okta was declared before Phase 3 built it, precisely to show the registry
+  // isn't ERP-shaped. Now that it is built, it is no longer described as
+  // forthcoming.
   await expect(page.getByRole("heading", { name: "Okta" })).toBeVisible();
-  await expect(page.getByText("Phase 3 builds it")).toBeVisible();
+  await expect(page.getByText("Phase 3 builds it")).toHaveCount(0);
 
-  // Nothing connected, so nothing unlocked, and the page says so rather than
-  // rendering an empty list.
-  await expect(page.getByText("Nothing is unlocked yet.")).toBeVisible();
+  // The seed connects an identity provider (pointed at the scripted one this
+  // suite runs) and leaves the ERP unconnected, which makes this page show
+  // both halves of the capability model at once: what one connection supplies,
+  // and what the absent one costs.
+  await expect(page.getByText("Single sign-on (OIDC)")).toBeVisible();
+  await expect(page.getByText("Directory provisioning (SCIM)")).toBeVisible();
+  // Connecting an identity provider must not reach into procurement features.
+  await expect(page.getByText("PO suggestions", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("ERP purchase-order sync")).toHaveCount(0);
 });
 
 test("the connect form asks for both credentials and marks every field", async ({ page }) => {
@@ -33,6 +40,11 @@ test("the connect form asks for both credentials and marks every field", async (
 
   // Every control labelled — the Wave 1 rule, which matters most on a form
   // filled in once from values read off two different Epicor screens.
+  //
+  // Unscoped and unambiguous: each connect form is dispatched on the
+  // integration's own type (src/app/dashboard/integrations/page.tsx), and no
+  // two of them share a label. If that ever stops being true these locators
+  // fail on strict mode, which is the right way to find out.
   await expect(page.getByLabel("Kinetic server URL")).toBeVisible();
   await expect(page.getByLabel("Company ID")).toBeVisible();
   await expect(page.getByLabel("API key")).toBeVisible();

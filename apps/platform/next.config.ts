@@ -17,7 +17,22 @@ const nextConfig: NextConfig = {
   // this app's own bundle. docs/architecture.md's "independently deployable"
   // is about the boundary being clean, which the connector contract enforces
   // — not about it having a separate build.
-  transpilePackages: ["@zenosource/epicor"],
+  transpilePackages: ["@zenosource/epicor", "@zenosource/okta"],
+
+  // The XML stack underneath the SAML verifier is CommonJS and reaches for
+  // Node builtins at load time. Bundling it produces a build that fails at
+  // the first assertion rather than at compile time, which is the worst place
+  // to find out. Left external, it is required normally at runtime — the
+  // routes that use it are all `runtime = "nodejs"`.
+  serverExternalPackages: [
+    "@node-saml/node-saml",
+    "@xmldom/xmldom",
+    "xml-crypto",
+    "xml-encryption",
+    "xml2js",
+    "xmlbuilder",
+    "xpath",
+  ],
 
   turbopack: {
     // Turbopack resolves modules relative to a filesystem root and will not

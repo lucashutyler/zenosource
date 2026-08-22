@@ -18,6 +18,8 @@ Two populations, one platform:
 - **Internal users** — employees of the buyer organization (procurement, sourcing, ops). Authenticate via the buyer org's own IdP.
 - **External users** — suppliers. Usually no enterprise IdP relationship with the buyer; they resolve action items straight from the reminder email with no login at all — the scoped action-view link is the entire v1 external surface. Persistent supplier accounts (password login, a supplier portal) are deliberately deferred; see [docs/todo.md](docs/todo.md#decided).
 
+Internal users get **two doors, not a replacement**: a password, and — once their organization connects an identity provider — single sign-on. Federation never takes the password away, and a directory that deactivates somebody always hands their open work to somebody else. Both were forced by rules this codebase already enforces rather than chosen; [docs/todo.md](docs/todo.md) Phase 3 says which.
+
 Third-party IdP support starts with **Okta** (OIDC + SAML, SCIM provisioning). Detail: [docs/integrations.md](docs/integrations.md#okta-idp).
 
 ## Integrations gate features
@@ -27,7 +29,7 @@ ZenoSource is built to be extensible: each integration declares the *capabilitie
 ## Initial integration targets
 
 - **ERP**: Epicor (Kinetic) — [docs/integrations.md#epicor-erp](docs/integrations.md#epicor-erp)
-- **IdP**: Okta — [docs/integrations.md#okta-idp](docs/integrations.md#okta-idp)
+- **IdP**: Okta (OIDC, SAML, SCIM 2.0) — [docs/integrations.md#okta-idp](docs/integrations.md#okta-idp)
 
 ## Repo structure (subprojects)
 

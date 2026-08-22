@@ -25,7 +25,7 @@ describe("allLocationsBelongToTenant", () => {
   });
 
   it("is true when every id belongs to the tenant", async () => {
-    const tenant = await db.tenant.create({ data: { name: "Tenant A" } });
+    const tenant = await db.tenant.create({ data: { name: "Tenant A", slug: "access-a" } });
     const location = await db.location.create({
       data: { tenantId: tenant.id, name: "Plant A", code: "A-01" },
     });
@@ -34,8 +34,8 @@ describe("allLocationsBelongToTenant", () => {
   });
 
   it("is false when an id belongs to a different tenant", async () => {
-    const tenantA = await db.tenant.create({ data: { name: "Tenant A" } });
-    const tenantB = await db.tenant.create({ data: { name: "Tenant B" } });
+    const tenantA = await db.tenant.create({ data: { name: "Tenant A", slug: "access-a" } });
+    const tenantB = await db.tenant.create({ data: { name: "Tenant B", slug: "access-b" } });
     const otherTenantsLocation = await db.location.create({
       data: { tenantId: tenantB.id, name: "Plant B", code: "B-01" },
     });
@@ -46,7 +46,7 @@ describe("allLocationsBelongToTenant", () => {
   });
 
   it("is false when an id doesn't exist at all", async () => {
-    const tenant = await db.tenant.create({ data: { name: "Tenant A" } });
+    const tenant = await db.tenant.create({ data: { name: "Tenant A", slug: "access-a" } });
     expect(await allLocationsBelongToTenant(["does-not-exist"], tenant.id)).toBe(false);
   });
 });

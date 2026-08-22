@@ -15,14 +15,43 @@ This was scaffolded with `create-next-app@latest` in July 2026 → Next.js 16.2.
 
 ## Auth
 
-No auth library (NextAuth/Auth.js, etc.) — a small hand-rolled implementation instead, following the pattern Next.js's own docs recommend for a DIY approach:
+Two doors, one session layer. No auth library (NextAuth/Auth.js, etc.) — a small hand-rolled
+implementation instead, following the pattern Next.js's own docs recommend for a DIY approach.
 
-- `bcryptjs` for password hashing (pure JS — avoids native-binding install issues; swap for `bcrypt` later if perf matters).
-- `jose` to sign/verify a session JWT stored in an `httpOnly` cookie (`src/lib/session.ts`).
-- `src/lib/dal.ts` centralizes `verifySession()` (memoized with React `cache()`) — call it from Server Components/Actions/Route Handlers close to the data, per [docs/architecture.md](../../docs/architecture.md#tenancy--users)'s "internal auth placeholder" item.
-- `proxy.ts` does the optimistic redirect (no session → `/login`); `verifySession()` in the DAL is the real enforcement point, not the proxy.
+- **Password** (`src/app/actions/auth.ts`): `bcryptjs` hashing (pure JS — avoids native-binding
+  install issues), and every candidate for an address is tried in turn, because email is unique
+  *per tenant* and the same address can legitimately exist in two organizations.
+- **Federated** (`src/lib/auth/`, `src/app/api/sso/[tenantSlug]/*`): the tenant is resolved from
+  the URL path *before* anything untrusted is parsed, the connector verifies the credential, and
+  the result is a session identical to a password one. `src/lib/auth/broker.ts` is protocol-
+  agnostic; nothing in `apps/platform` knows whether a tenant federates over OIDC or SAML.
+- `jose` signs/verifies a session JWT in an `httpOnly` cookie (`src/lib/session.ts`), whichever
+  door it came through.
+- `src/lib/dal.ts` centralizes `verifySession()` (memoized with React `cache()`) — call it from
+  Server Components/Actions/Route Handlers close to the data. It is also where a `DEACTIVATED`
+  user is ejected, which is the *whole* session-revocation mechanism: sessions are stateless signed
+  cookies with a seven-day life and nothing expires them early, but this runs on every request that
+  touches data, so "the directory disabled Casey" takes effect on Casey's very next request.
+- `proxy.ts` does the optimistic redirect. `/api/sso/` is public (those legs run before a session
+  exists) and `/api/scim/` is *self-authenticating* — it answers with its own status codes and must
+  never be redirected, because a directory's provisioning console renders an HTML sign-in page as an
+  opaque failure and disables provisioning at its end after enough of them.
 
-This is deliberately the credentials-only "internal user" placeholder from [docs/todo.md](../../docs/todo.md) Phase 1 — it's not what Okta federation looks like in Phase 3, but the DAL boundary is where an OIDC/SAML session gets swapped in later without touching call sites.
+**Password sign-in is never taken away.** There is no per-tenant SSO-required switch, and that is a
+decision rather than an omission: every safe version of one needs either working outbound email
+(Phase 6 — the chase does not yet leave the building) or a new pre-issued credential class, and
+`disconnect()` keeps `config` while wiping secrets, so an enforcement flag stored there would
+survive a disconnect as a one-click tenant lockout. See [docs/todo.md](../../docs/todo.md).
+
+**The sign-in and directory paths deliberately do not read the capability model.** `sso_oidc`,
+`sso_saml` and `scim_provisioning` gate the "What's switched on" list on `/dashboard/integrations`
+and nothing else. `capabilitiesForTenant` grants only on `CONNECTED`, so gating sign-in on a
+capability would mean a failed health check at 2am locks every user of that tenant out by morning —
+including the owner who is the only person who could repair it, whose reconnect email would link
+them to a dashboard behind the door that just closed. The rule "DEGRADED grants nothing" is right
+and is untouched; its stated reason is the harm of *stale mirrored data*, and a signature-verified
+assertion has no equivalent. The long version is in `src/lib/integrations/capabilities.ts`, written
+where somebody about to "fix" the inconsistency will read it.
 
 ## Data
 
@@ -49,6 +78,20 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 Without it the app runs fine and the connect form refuses to save rather than storing a service account in plaintext. `.env.test` needs the same four, with `APP_BASE_URL="http://localhost:3100"` — the E2E server's port, not 3000, or every action link in a captured email points at nothing.
 
 **If pages 500 after a schema change, check for a stale `next dev`.** A long-running dev server holds the Prisma client it started with, so once you change the schema its queries reference columns the database no longer has — and every affected route throws while a freshly started server on another port is fine. This has been mistaken for a real outage twice. Restart the server, don't debug the query.
+
+**Single sign-on and directory provisioning in dev**: the same shape as the dev mailbox — the whole
+loop works without the thing it would normally need. `npm run fake-idp` starts a scripted identity
+provider on port 3101 (`scripts/fake-idp.ts`), and `npm run seed` creates a connection pointing at
+it, a claimed `acme.test` domain, and a freshly generated directory token, printing the lot. Then
+`/login/sso` with any `@acme.test` address signs you in for real: real RS256 tokens, real
+signatures, real verification. The E2E suite starts the same server itself in `e2e/global-setup.ts`.
+
+It is deliberately a **separate process, not a route**. A credential-minting endpoint that ships
+with the product and is disabled by an environment variable is an authentication bypass waiting for
+one bad deploy; nothing under `src/` imports it, and it is exported from `@zenosource/okta/testing`
+rather than the package root so reaching it means importing a path that says what it is. Without
+`INTEGRATION_SECRET_KEY` the seed skips the connection and prints why, rather than putting a client
+secret in the database unsealed.
 
 **Email in dev**: with no `EMAIL_PROVIDER` set (the default), outbound email is captured to the `CapturedEmail` table instead of being delivered. Browse it at `/dashboard/emails` ("Emails (dev)" in the nav): the `/a/{token}` action links inside are clickable, the HTML body renders in a 390px phone frame, and the chase can be run from the page — so the whole external no-login flow works without a provider. Setting `EMAIL_PROVIDER` disables the page and the capture path (`src/lib/email/sender.ts`).
 
@@ -87,7 +130,9 @@ docker compose exec -T db psql -U zenosource -d postgres -c "CREATE DATABASE zen
 - **Gate at the route, not just the nav.** `requireFeature(tenantId, "po-suggestions")` calls `notFound()`; a link merely hidden from the sidebar but reachable by typing the URL is the same bug as the locations list that was tenant-scoped and not location-scoped.
 - **`DEGRADED` grants nothing.** A feature reading data that stopped updating is worse than an absent one, and the withdrawal is loud: `recordHealth()` opens an `INTEGRATION_RECONNECT` item against an OWNER. Don't add a status that turns a feature off quietly — `lifecycle.test.ts` will fail you, which is the point.
 - **Credentials are sealed** (`secrets.ts`, AES-256-GCM under `INTEGRATION_SECRET_KEY`). Never log a `ConnectorSession`, never render a secret back into a form, and don't add a code path that stores one unsealed — `connectIntegration` refuses to run at all without a key configured.
-- **The connector boundary is `contract.ts`.** No Epicor vocabulary — no BO name, no OData fragment — belongs anywhere in `src/`. Integration packages depend on nothing here and are wired in through `connectors.ts`, where the assignment to `ErpConnector` is the conformance check.
+- **The connector boundary is `contract.ts` and `idp-contract.ts`.** No vendor protocol vocabulary — no BO name, no OData fragment, no directory schema identifier, no assertion element, no token wire parameter — belongs anywhere in `src/`. `vocabulary.test.ts` greps for all of it and fails the build; it is scoped to protocol *shapes*, never to vendor names, because a customer connecting Okta should be told it is Okta. Integration packages depend on nothing here and are wired in through `connectors.ts`, where the assignments to `ErpConnector` and `IdpConnector` are the conformance check. Two contracts, not one union: an ERP pulls batches outward and an identity provider is *called* by a directory, and folding them together would produce a type whose members are mostly optional — which is the same as no check at all.
+- **`getErpConnector` / `getIdpConnector` / `getAnyConnector`.** The last is the base shape (`parseConfig`, `checkHealth`) for the paths that genuinely don't care — connecting, and the "Test connection" button. `isImplemented()` is what the integrations page offers a connect form on the strength of, and `registry.test.ts` asserts it agrees with the registry's own `available` / `planned` status in both directions.
+- **The Okta package has runtime dependencies; the Epicor one does not.** It is linked with `file:`, which npm resolves by symlink, so its dependencies resolve out of *its* `node_modules` — `npm ci` here does not install them. Locally that means running `npm install` in `integrations/idp/okta` once; in CI it is an explicit step in all three platform jobs. Without it every platform job fails on a bare module-not-found the first time anything imports the connector.
 - **`runSync` takes its connector as a parameter**, same as `runReminderJob` takes its db and sender: it has to run identically from a server action, a scheduler, and a test with a scripted transport. Production callers omit it.
 - **Mirrored data never overwrites collaboration state.** The ERP owns quantity, price and dates; acknowledgment, promise dates and proposed changes are ours. `statusToApply()` only moves forward from `DRAFT` and accepts terminal states — a sync that turned `ACKNOWLEDGED` back into `ISSUED` would re-chase a supplier who already answered, which is the failure this product sells itself as preventing.
 
@@ -99,6 +144,8 @@ docker compose exec -T db psql -U zenosource -d postgres -c "CREATE DATABASE zen
 - **End-to-end**: Playwright (`npm run test:e2e`, `npm run test:e2e:ui`). Also runs against `zenosource_test` — `e2e/global-setup.ts` deploys the migrations and reseeds before every run, so specs always start from known data. The E2E server runs on port 3100 with its own build directory (`E2E_DIST_DIR=.next-e2e` in `next.config.ts`) specifically so it can run *alongside* a manually-running `npm run dev` without Next's project-directory dev lock killing one of them. `e2e/helpers/db.ts` uses raw `pg` queries rather than the generated Prisma client — Playwright's own TS transform doesn't handle the generated client's `import.meta.url` usage (tsx and Next's bundler both do fine; this is specific to Playwright's pipeline).
 - **CI**: `.github/workflows/platform-ci.yml` runs typecheck/lint, unit tests, and E2E on push/PR, each E2E/unit job with its own Postgres service container — so this class of shared-test-DB interference can't happen in CI even though it's a real local concern.
 - **Add tests with the change that needs them**, not as a follow-up — a race-condition fix without a test proving the race is closed isn't done. When you build a new server action or lifecycle transition, prefer extending the existing integration-test pattern (a real test-DB write, not a mocked Prisma client) over a pure unit test with mocks — this app's server actions are thin enough that mocking them tends to test the mock, not the behavior.
+- **`e2e/sso.spec.ts` is order-dependent in exactly one place, and says so at the top.** Signing in through an identity provider as somebody who already had a password *adopts* their account and removes the password — deliberately, since a second unmanaged way into an account the directory controls means disabling somebody there would not actually disable them. That is worth asserting and it destroys a fixture every other spec signs in with, so it is the last test in the file. The scripted identity provider is a second Playwright `webServer` on port 3101, not something started in `globalSetup`: started there it was up when setup logged it and gone by the time a browser tried to reach it, which reads as a broken sign-in rather than a missing fixture.
+- **`src/lib/integrations/vocabulary.test.ts` greps the whole of `src/` for vendor protocol vocabulary** — business-object names, directory schema identifiers, assertion elements, token wire parameters — and fails the build on any of it. It found two real leaks the first time it ran, one of them a paging convention that had quietly become part of a supposedly protocol-neutral port. It is scoped to protocol *shapes* and never to vendor names: a customer connecting Okta should be told it is Okta.
 - **`src/lib/lifecycle.test.ts` is the executable form of the product's central claim.** It asserts that every PO and RFQ status either mints an action item or appears on `UNCHASED_STATUSES` with a written reason, and that the side who owes each action agrees with whose court the status is in. A new status added to the schema without a decision about who owes what fails there rather than shipping as a silent dead end.
 - **E2E fixtures create their own supplier and contact** (`e2e/helpers/db.ts`). Sharing a seeded contact couples specs through the chase's 24-hour per-item cooldown, which then suppresses a later spec's email — a failure that looks like a mailbox bug and is actually the cooldown working.
 - **`e2e/smoke.spec.ts` visits every route and treats the browser console as a failure.** Add a line to its `ROUTES` list whenever you add a page. It exists because a `Decimal` crossing into a Client Component only complains in the console, and the page it happened on had no spec — three instances were fixed by hand before it became clear the missing thing was a sweep, not more care. Anything genuinely expected goes in `isIgnorable` with the reason written down.

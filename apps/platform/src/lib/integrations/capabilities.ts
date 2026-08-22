@@ -81,6 +81,23 @@ export const FEATURES = {
     lockedBecause:
       "Connect your ERP to pull negotiated vendor pricing in as price lists.",
   },
+  // The three below gate exactly one thing: the "What's switched on" list on
+  // /dashboard/integrations. They are deliberately NOT what the sign-in path
+  // or the directory endpoint read.
+  //
+  // Do not "fix" that into consistency. `capabilitiesForTenant` grants only on
+  // CONNECTED, so a DEGRADED connection withdraws these — which is right for
+  // an ERP feature, where the harm is confidently stale data, and inverts
+  // completely here. Gating sign-in on `sso_oidc` would mean a failed health
+  // check at 2am locks every user of that tenant out by morning, including the
+  // owner who is the only person who could repair it and whose reconnect email
+  // would link them to a dashboard behind the door that just closed. Gating
+  // provisioning on `scim_provisioning` would mean our own probe failing stops
+  // a customer deprovisioning somebody who has left, whose session is live for
+  // up to seven days.
+  //
+  // So src/lib/auth/broker.ts and the directory endpoint read the connection
+  // row directly, and this stays exactly as it is.
   "sso-oidc": {
     label: "Single sign-on (OIDC)",
     requires: ["sso_oidc"],
