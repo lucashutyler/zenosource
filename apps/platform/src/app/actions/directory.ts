@@ -9,19 +9,13 @@ import { issueDirectoryToken, revokeDirectoryToken } from "@/lib/auth/directory-
 import { domainOf, isPublicEmailDomain } from "@/lib/auth/public-domains";
 import { setGroupMapping } from "@/lib/directory/mapping";
 
-// FormState plus the one thing this file returns that no other action does:
-// a credential, shown once. It is not stored anywhere that could give it back,
-// so if the page loses it the only option is issuing another — which is the
-// honest position for a token we deliberately cannot recover.
+/** `issuedToken` is returned once; no plaintext is stored, so it cannot be shown again. */
 export type DirectoryActionState =
   | (NonNullable<FormState> & { issuedToken?: string })
   | undefined;
 
-// Everything here is OWNER-only, for the same reason connecting an integration
-// is: a directory token can create and deactivate users across the whole
-// organization, and a domain claim decides whose identity provider gets to
-// authenticate an address. Both are strictly larger than anything a MEMBER can
-// do.
+// A directory token can create and deactivate users across the whole organization,
+// and a domain claim decides whose identity provider may authenticate an address.
 async function requireOwner(formData: FormData) {
   const user = await getCurrentInternalUser();
   if (user.role !== "OWNER") {
@@ -58,9 +52,6 @@ export async function issueToken(
   });
 
   revalidate();
-  // Returned once, and only once — it is not stored anywhere that could give
-  // it back. Copying it now or issuing another are the only two options, which
-  // is the honest position for a credential we deliberately cannot recover.
   return { ok: "Token created. Copy it now — it can't be shown again.", issuedToken: issued.plaintext };
 }
 
@@ -95,10 +86,8 @@ export async function addDomain(
     select: { tenantId: true },
   });
   if (existing) {
-    // The unique index is the real control; this is the sentence in front of
-    // it. Deliberately the same message whether the claim is this tenant's or
-    // somebody else's — "another organization has claimed acme.com" tells a
-    // stranger that a competitor is a customer.
+    // "That domain can't be added" is deliberately vague: naming the other
+    // organization would tell a stranger that a competitor is a customer.
     return fail(
       formData,
       existing.tenantId === user.tenantId
@@ -111,9 +100,7 @@ export async function addDomain(
     data: {
       tenantId: user.tenantId,
       domain,
-      // Verified by the act of an owner adding it, which is exactly as much as
-      // that proves. See TenantDomain in the schema and docs/todo.md for what
-      // this does and does not mean, and what changes when signup ships.
+      // Verified by an owner adding it, which is exactly as much as that proves.
       verifiedAt: new Date(),
     },
   });

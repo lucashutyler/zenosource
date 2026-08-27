@@ -9,18 +9,9 @@ import { ErrorText } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Sign in with your organization" };
 
-// A Server Component with a plain GET form, and no server action.
-//
-// That is a correctness requirement, not a style choice. A server action's
-// redirect() is performed by the router as a client-side navigation, and the
-// router cannot follow a redirect to another origin — which is exactly what
-// the next hop is. The symptom is a browser that sits on /api/sso/{slug}/start
-// having gone nowhere, and it took a real E2E failure to see it.
-//
-// A native form submit is a document navigation, so every hop after it —
-// here, then the start route, then the identity provider, then back — is a
-// real HTTP redirect the browser follows. Signing in therefore needs no
-// JavaScript at all, which is a good property for an auth flow to have anyway.
+// A plain GET form, not a server action: a server action's redirect() is a
+// client-side router navigation, and the router cannot follow the hop to
+// another origin that the next leg requires.
 
 export default async function SsoLoginPage({
   searchParams,
@@ -53,11 +44,8 @@ export default async function SsoLoginPage({
           </p>
         </div>
 
-        {/* Deliberately the same sentence for an address we don't know, an
-            organization that hasn't connected anything, and something that
-            isn't an address. Saying which would turn this box into an oracle
-            for whether a company uses ZenoSource and whether they federate —
-            useful to somebody writing a phishing email and to nobody else. */}
+        {/* Deliberately the same sentence for every failure: saying which would
+            make this box an oracle for whether a company federates. */}
         <ErrorText>
           {submitted
             ? "We don't have single sign-on set up for that address. Sign in with your password instead."

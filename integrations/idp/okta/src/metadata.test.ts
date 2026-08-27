@@ -33,8 +33,6 @@ describe("reading identity-provider metadata", () => {
     if (!result.ok) return;
     expect(result.metadata.entityId).toBe("http://www.okta.test/exk1");
     expect(result.metadata.ssoUrl).toBe("https://acme.okta.test/app/sso/saml");
-    // Both, in order — a rollover publishes two, and dropping the second is
-    // an outage the day the first one is retired.
     expect(result.metadata.certificates).toEqual([fake.certificateBody, second.certificateBody]);
   });
 

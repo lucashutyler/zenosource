@@ -5,20 +5,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { generateSelfSignedCertificate, type GeneratedCertificate } from "./certificate";
 import type { FetchLike } from "../types";
 
-// The scripted identity provider every test in this package runs against.
-//
-// Same position `integrations/erp/epicor/src/testing/fake-kinetic.ts` occupies:
-// an injected transport, never a mounted route. There is no Okta org in CI and
-// there will not be one before a pilot customer, so a test that needs one is a
-// test that gets skipped and then deleted.
-//
-// What it is not is a stub. It mints genuinely RS256-signed tokens and
-// genuinely `xml-crypto`-signed assertions over real exclusive
-// canonicalisation, verified against a real X.509 certificate — so a test that
-// passes here has exercised the same code paths a real assertion would, and a
-// signature-wrapping test is a real signature being wrapped rather than a
-// mocked verifier being told to say no.
-
 export type FakeOktaUser = {
   sub: string;
   email: string;
@@ -26,11 +12,6 @@ export type FakeOktaUser = {
   groups?: string[];
 };
 
-// The first two match people the platform's seed already created with
-// passwords, so signing in as one exercises *adoption*. The third does not
-// exist anywhere, so signing in as them exercises provisioning on first
-// sign-in. Both paths matter and both are worth being able to reach by typing
-// an address.
 const DEFAULT_USERS: FakeOktaUser[] = [
   { sub: "00uSEEDBUYER", email: "buyer@acme.test", name: "Jordan Buyer", groups: ["Procurement"] },
   { sub: "00uSEEDCASEY", email: "casey@acme.test", name: "Casey Buyer", groups: ["Procurement"] },
@@ -43,7 +24,6 @@ export type FakeOktaOptions = {
   clientSecret?: string;
   users?: FakeOktaUser[];
   certificate?: GeneratedCertificate;
-  /** Fixed clock, for the specs that need one. */
   now?: () => Date;
 };
 
@@ -54,7 +34,6 @@ export type SignAssertionOptions = {
   inResponseTo: string;
   destination: string;
   audience: string;
-  /** Overrides for the negative cases. */
   now?: Date;
   notOnOrAfterMinutes?: number;
   signResponse?: boolean;
@@ -75,19 +54,13 @@ export type FakeOkta = {
   users: FakeOktaUser[];
   calls: FakeOktaCall[];
   fetchImpl: FetchLike;
-  /** Walks the authorize redirect and returns the code the callback carries. */
   authorize(url: string, options?: { user?: FakeOktaUser }): { code: string; state: string };
   signAssertion(options: SignAssertionOptions): string;
   /** Base64 of the above, as it arrives in a form post. */
   encodeResponse(xml: string): string;
   signIdToken(claims: Record<string, unknown>, options?: { alg?: string; kid?: string }): Promise<string>;
-  /**
-   * Make the next token exchange return this exact ID token. The only way to
-   * test what the verifier does with a token no honest identity provider
-   * would mint — `alg: none`, an HMAC signed with the client secret, a
-   * rotated key, a missing claim — since those cannot be produced by signing
-   * normally.
-   */
+  /** Serve this exact ID token from the next token exchange: the only way to
+   * test a token no honest identity provider would mint. */
   serveNextIdToken(token: string): void;
   handler(request: IncomingMessage, response: ServerResponse): void;
 };
@@ -317,8 +290,8 @@ export function createFakeOkta(options: FakeOktaOptions = {}): FakeOkta {
     };
 
     if (url.pathname.endsWith("/.well-known/openid-configuration")) {
-      // Reported relative to where this server actually is, so a dev issuer of
-      // http://localhost:3101 discovers endpoints on http://localhost:3101.
+      // Endpoints are reported relative to the request host, so a dev issuer
+      // on http://localhost:3101 discovers endpoints on that same origin.
       const origin = `http://${request.headers.host ?? "localhost"}`;
       return send(200, {
         ...discovery(),
@@ -356,9 +329,6 @@ export function createFakeOkta(options: FakeOktaOptions = {}): FakeOkta {
     }
 
     if (url.pathname === "/sso/saml") {
-      // The redirect binding carries a deflated request; the fake does not
-      // need to read it beyond the two values it must echo, so it takes them
-      // from the query rather than inflating.
       const relayState = url.searchParams.get("RelayState") ?? "";
       const acs = url.searchParams.get("acs") ?? "";
       const requestId = url.searchParams.get("rid") ?? "";

@@ -68,16 +68,9 @@ export async function runReminderJob(params: {
 
   for (const item of dueItems) {
     if (item.ownerType === "INTERNAL_USER" && item.internalOwnerId) {
-      // The mirror of the inactive-contact skip below. A digest addressed to
-      // somebody who has left is how a chase silently stops working while the
-      // board keeps looking fine to everyone still here — and after Phase 3 a
-      // directory can deactivate somebody at any hour with nobody on this side
-      // watching.
-      //
-      // Skipped, never reassigned. This job runs per-tenant from the
-      // `Chase all N` button, and a chase click must not silently rewrite who
-      // owns what. Handing the work over belongs to deactivation itself
-      // (src/lib/offboarding.ts), where somebody can see it happen.
+      // Skipped, never reassigned: this job runs from the `Chase all N`
+      // button, and a chase click must not silently rewrite who owns what.
+      // Handing the work over is deactivation's job (src/lib/offboarding.ts).
       if (item.internalOwner?.status === "DEACTIVATED") continue;
       const group = internalGroups.get(item.internalOwnerId) ?? [];
       group.push(item);

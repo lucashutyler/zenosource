@@ -12,8 +12,6 @@ describe("the connect form", () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // The split is the integration's call, and getting it wrong here is what
-    // puts a live credential in a page a support screenshot can capture.
     expect(result.secrets).toEqual({ clientSecret: "shhh" });
     expect(JSON.stringify(result.config)).not.toContain("shhh");
   });
@@ -76,7 +74,6 @@ describe("the connect form", () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // PEM armour stripped, so what is stored is what a document carries.
     expect(result.config.certificates).toEqual([fake.certificateBody]);
   });
 

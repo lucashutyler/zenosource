@@ -4,25 +4,11 @@ import { db } from "@/lib/db";
 import { hint } from "@/lib/integrations/secrets";
 import type { PrismaClient } from "@/generated/prisma/client";
 
-// The bearer a customer's directory authenticates with.
+// Hashed rather than sealed: this is only ever verified, never replayed, and a
+// seal with a fresh IV per value cannot be looked up by what somebody presents.
+// bcrypt defends nothing on 32 random bytes and costs ~100ms per request.
 //
-// docs/integrations.md: "each tenant's Okta connection gets its own SCIM
-// bearer token, and that token *is* the tenant boundary: a bug that lets one
-// tenant's SCIM token touch another tenant's users is a severe multi-tenancy
-// breach, not just a permissions bug."
-//
-// Hashed, not sealed, and the reason is the direction of use.
-// src/lib/integrations/secrets.ts is reversible because an ERP credential has
-// to be *replayed* outbound; this one is only ever *verified*, and a seal with
-// a fresh IV per value cannot be looked up by the value somebody presents —
-// authenticating a push would mean decrypting every row on every request.
-// bcrypt is the wrong tool for the opposite reason: this is 32 bytes of
-// entropy rather than something a human chose, so there is nothing for a work
-// factor to defend, and ~100ms per request across a bulk import is a timeout.
-//
-// Several live tokens per connection, on purpose. Rotation should overlap —
-// issue the new one, change it at the directory's end, revoke the old — rather
-// than needing a cutover with a window in which offboarding does not work.
+// Several live tokens per connection, so rotation can overlap.
 
 const PREFIX = "zs_dir_";
 
@@ -43,9 +29,8 @@ export async function issueDirectoryToken(params: {
   name: string;
   createdByUserId?: string | null;
 }): Promise<IssuedToken> {
-  // The prefix is deliberate: a value that leaks into a log or a paste is
-  // recognisable as a ZenoSource directory credential by whoever finds it,
-  // which is the difference between a revoked token and an unnoticed one.
+  // The prefix makes a leaked value recognisable as a ZenoSource directory
+  // credential by whoever finds it.
   const plaintext = `${PREFIX}${randomBytes(32).toString("base64url")}`;
   const token = await db.directoryToken.create({
     data: {
@@ -74,13 +59,9 @@ export function bearerFrom(header: string | null | undefined): string | null {
 }
 
 /**
- * Authenticate an inbound directory request.
- *
- * Every failure returns `null` and the caller answers with the same 401 —
- * unknown token, revoked token, malformed header, disconnected integration.
- * Distinguishing them would tell whoever is probing which of the four they
- * achieved, and none of the four is something a legitimate client needs to
- * tell apart.
+ * Authenticate an inbound directory request. Every failure returns `null` and
+ * the caller answers the same 401 — distinguishing an unknown token from a
+ * revoked one tells whoever is probing which of them they achieved.
  */
 export async function resolveDirectoryToken(
   presented: string | null,
@@ -101,27 +82,21 @@ export async function resolveDirectoryToken(
   });
   if (!row || row.revokedAt) return null;
 
-  // The unique index already found it by exact hash, so this compares equal
-  // by construction. Kept as the belt to the index's braces: if the lookup is
-  // ever loosened — a prefix scan, a case-insensitive collation — this is the
-  // check that still has to pass, and it is constant-time.
+  // Equal by construction today; the constant-time check that still has to
+  // hold if the lookup is ever loosened to a prefix scan or a loose collation.
   const presentedDigest = Buffer.from(digest(presented), "utf8");
   const stored = Buffer.from(row.tokenHash, "utf8");
   if (presentedDigest.length !== stored.length || !timingSafeEqual(presentedDigest, stored)) {
     return null;
   }
 
-  // DEGRADED still provisions. A certificate expiring, or a health probe
-  // failing, must not stop a customer deprovisioning somebody who has left —
-  // that is the moment when provisioning matters most, and the leaver's
-  // session is live for up to seven days. DISCONNECTED does stop it: turning
-  // an integration off is a decision, and connections.ts revokes these tokens
-  // as part of it anyway.
+  // DEGRADED still provisions: a failing health probe must not stop a customer
+  // deprovisioning somebody who has left, whose session is live for up to seven
+  // days. DISCONNECTED does stop it — turning an integration off is a decision.
   if (row.connection.status === "DISCONNECTED") return null;
 
-  // Best-effort, and never allowed to fail the request: this is a
-  // "when did this last work" convenience on the settings page, not part of
-  // authenticating anything.
+  // Best-effort, and never allowed to fail the request: a convenience on the
+  // settings page, not part of authenticating anything.
   void client.directoryToken
     .update({ where: { id: row.id }, data: { lastUsedAt: new Date() } })
     .catch(() => undefined);
@@ -137,10 +112,8 @@ export async function revokeDirectoryToken(tokenId: string, tenantId: string): P
 }
 
 /**
- * Called by `disconnect()`. Its own comment says disconnecting exists so that
- * "a disconnected integration stops being a credential at rest" — a live
- * directory token that could still deactivate users would break that promise
- * in the one direction that matters.
+ * Called by `disconnect()` — a live directory token could otherwise still
+ * deactivate users after an integration is turned off.
  */
 export async function revokeAllForConnection(
   connectionId: string,

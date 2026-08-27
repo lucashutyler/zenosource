@@ -71,9 +71,6 @@ describe("the connector as the platform sees it", () => {
   });
 
   it("reads no session on the directory leg", async () => {
-    // The inbound directory request is authorized entirely by the platform
-    // before this is called, so the connector holds no credential for it —
-    // an empty session must work.
     const connector = new OktaConnector();
     const response = await connector.handleDirectoryRequest(
       { config: {}, secrets: {} },

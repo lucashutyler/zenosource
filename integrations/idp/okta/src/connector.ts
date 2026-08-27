@@ -19,27 +19,16 @@ import type {
   SignInResult,
 } from "./types";
 
-/**
- * Everything Okta declares in the platform's registry, restated here so the
- * health check knows what to probe without importing the platform.
- * conformance.test.ts on the platform side is what keeps the two in step.
- */
 export const OKTA_CAPABILITIES = ["sso_oidc", "sso_saml", "scim_provisioning"] as const;
 
 export type OktaConnectorOptions = {
-  /** Injected transport. Every test in this package supplies one. */
   fetchImpl?: FetchLike;
 };
 
 /**
- * One connector, two protocols.
- *
- * Not two registry entries. `IntegrationConnection` is unique on
- * (tenant, integration) because a second connection would mean two sources of
- * truth, and directory provisioning is protocol-independent — splitting on
- * protocol would strand a customer's group push on whichever half they did
- * not pick, and offer a SAML customer two cards to choose between when their
- * own admin already made that choice once.
+ * One connector, two protocols, not two registry entries:
+ * `IntegrationConnection` is unique on (tenant, integration), and directory
+ * provisioning is protocol-independent.
  */
 export class OktaConnector implements IdpConnector {
   readonly integrationId = "okta";
@@ -66,12 +55,8 @@ export class OktaConnector implements IdpConnector {
   }
 
   /**
-   * Where each protocol puts our opaque handle on the way back: OIDC calls the
-   * slot `state`, SAML calls it `RelayState`. Both names live here and nowhere
-   * in the platform, which is the whole reason this method is on the contract.
-   *
-   * Not a trust decision — the value is a lookup key for a single-use row, and
-   * everything that makes it mean anything happens after it is looked up.
+   * OIDC calls the slot `state`, SAML calls it `RelayState`. Not a trust
+   * decision — the value is a lookup key for a single-use row.
    */
   readHandle(callback: SignInCallback): string | null {
     return callback.params.state || callback.params.RelayState || null;
@@ -113,9 +98,6 @@ export class OktaConnector implements IdpConnector {
     if (config.protocol === "SAML") {
       return renderServiceProviderMetadata(params);
     }
-    // OIDC has no metadata document to import, but an admin still has to put
-    // two values into their application, and this is where they are stated in
-    // the protocol's own vocabulary rather than the platform's.
     return {
       contentType: "application/json; charset=utf-8",
       body: JSON.stringify(
@@ -140,9 +122,8 @@ export class OktaConnector implements IdpConnector {
     request: DirectoryRequest,
     store: DirectoryStore
   ): Promise<DirectoryResponse> {
-    // No session is read: the directory leg is inbound, and everything that
-    // authorizes it was settled by the platform before this is called. Taking
-    // the parameter anyway keeps one shape for every connector method.
+    // The directory leg is inbound: everything that authorizes it was settled
+    // by the platform before this is called, so no session is read.
     return handleDirectoryRequest(request, store);
   }
 }

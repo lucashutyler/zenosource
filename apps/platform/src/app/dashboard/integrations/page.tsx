@@ -247,10 +247,8 @@ export default async function IntegrationsPage() {
 
               {user.role === "OWNER" && buildable && status !== "CONNECTED" && (
                 <div className="mt-4 border-t border-rule pt-4">
-                  {/* Dispatched on the integration's own type. Rendering one
-                      form for every integration worked while there was one;
-                      with two it would put an ERP's server URL and company id
-                      in front of somebody connecting an identity provider. */}
+                  {/* One shared form would put an ERP's server URL and company
+                      id in front of somebody connecting an identity provider. */}
                   {integration.type === "idp" ? (
                     <OktaConnectForm integrationId={integration.id} />
                   ) : (

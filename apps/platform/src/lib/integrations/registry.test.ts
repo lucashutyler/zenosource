@@ -70,18 +70,6 @@ describe("the capability model holds together", () => {
   });
 
   it("an integration is only offered when something implements it", () => {
-    // This replaced an assertion that at least one integration was still
-    // `planned`, which was true while Okta was unbuilt and became a build
-    // failure the moment Phase 3 shipped it. The temptation at that point is
-    // to declare a placeholder second identity provider so the old assertion
-    // passes — but docs/todo.md's open questions still say "ERP #2 / IdP #2:
-    // still open", so that would be fabricating a roadmap to satisfy a test.
-    //
-    // The replacement is stronger than what it replaced, and it holds whether
-    // or not anything is planned: `available` means exactly "this build can
-    // do it", in both directions. A card offering a connect button that fails
-    // on click, and a built integration still described as forthcoming, are
-    // both build failures now.
     for (const integration of INTEGRATIONS) {
       if (integration.status === "available") {
         expect(
@@ -128,9 +116,6 @@ describe("feature resolution", () => {
   });
 
   it("connecting an identity provider unlocks no procurement features", () => {
-    // The mirror of the above, and the reason both are worth writing: the
-    // registry's whole claim is that adding one kind of integration cannot
-    // reach into another's features.
     const okta = INTEGRATIONS.find((i) => i.id === "okta")!;
     const unlocked = unlockedFeatures(okta.capabilities as Capability[]);
     expect(unlocked).toContain("scim-provisioning");
@@ -139,11 +124,8 @@ describe("feature resolution", () => {
   });
 
   it("one identity-provider connection never verifies both sign-in protocols", () => {
-    // A connection carries one protocol, so its health check grants
-    // `sso_oidc` XOR `sso_saml`. Declaring both on the integration is right —
-    // the integration can do either — but a tenant only ever gets the one
-    // their own admin configured, which is why these are two features with
-    // separate copy rather than one `sso` with an any-of rule.
+    // A connection carries one protocol, which is why these are two features
+    // rather than one `sso` with an any-of rule.
     expect(unlockedFeatures(["sso_oidc", "scim_provisioning"])).toEqual(
       expect.arrayContaining(["sso-oidc", "scim-provisioning"])
     );

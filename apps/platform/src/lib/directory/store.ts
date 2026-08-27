@@ -6,18 +6,6 @@ import { applyGrants } from "./mapping";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { DirectoryStore, DirectoryUser } from "@/lib/integrations/idp-contract";
 
-// Where the directory's tenant boundary is actually enforced.
-//
-// Every method below closes over one tenantId and one connectionId, taken from
-// the token row that authenticated the request, and none of them accepts a
-// tenant as an argument. That is the design rather than a convention: there is
-// no signature here into which the wrong tenant can be passed, so the breach
-// docs/integrations.md warns about — "a bug that lets one tenant's SCIM token
-// touch another tenant's users" — has no shape to take.
-//
-// The connector on the other side of this port never sees a tenant at all. It
-// translates a protocol; this decides what is allowed.
-
 export function directoryStoreFor(context: {
   tenantId: string;
   connectionId: string;
@@ -48,7 +36,6 @@ export function directoryStoreFor(context: {
     externalRef: true,
   } as const;
 
-  /** Always scoped. Never called with anything but this connection's own key. */
   function findRow(externalRef: string) {
     return db.internalUser.findFirst({
       where: { tenantId, sourceIntegrationId: integrationId, externalRef },
@@ -71,10 +58,8 @@ export function directoryStoreFor(context: {
     },
 
     async listUsers({ skip, take, email, externalRef }) {
-      // Only people this connection provisioned are listed. A password account
-      // an owner created by hand is not the directory's to enumerate, and
-      // returning it would invite the directory to "reconcile" by deactivating
-      // everyone it does not recognise.
+      // Only users this connection provisioned. Returning hand-made accounts would invite
+      // the directory to "reconcile" by deactivating everyone it does not recognise.
       const where = {
         tenantId,
         sourceIntegrationId: integrationId,
@@ -99,8 +84,7 @@ export function directoryStoreFor(context: {
 
       const bySubject = await findRow(externalRef);
       if (bySubject) {
-        // A retry of a create that already happened. Idempotent, because a
-        // directory that gets an error here retries forever.
+        // Idempotent: a directory that gets an error on a repeated create retries forever.
         const updated = await db.internalUser.update({
           where: { id: bySubject.id },
           data: { name },
@@ -116,9 +100,7 @@ export function directoryStoreFor(context: {
 
       if (byEmail) {
         if (byEmail.sourceIntegrationId && byEmail.externalRef !== externalRef) {
-          // Two directory records claiming one address. Refused rather than
-          // reassigned: whichever way we guessed, one real person would end up
-          // signing in as another.
+          // Refused rather than reassigned: either guess signs one real person in as another.
           const refused = "Another directory user in this organization already has that address.";
           await recordDirectoryEvent({
             db,
@@ -133,10 +115,8 @@ export function directoryStoreFor(context: {
           return { refused };
         }
 
-        // The ordinary case at a first federation: somebody who has been using
-        // a password account for weeks. Adopted, keeping their role and their
-        // history — every purchase order they issued points at this row — and
-        // losing the password, so the directory really is in control of access.
+        // Adopting the existing row keeps their history, and clearing the password leaves
+        // the directory actually in control of access.
         const adopted = await db.internalUser.update({
           where: { id: byEmail.id },
           data: { sourceIntegrationId: integrationId, externalRef, name, passwordHash: null },
@@ -189,9 +169,8 @@ export function directoryStoreFor(context: {
           select: { id: true },
         });
         if (clash && clash.id !== row.id) {
-          // Nothing is mutated on the way to this refusal — a partial apply
-          // would leave the name changed and the address not, with the
-          // directory told the whole thing failed.
+          // Nothing is mutated before this refusal: a partial apply would leave the name
+          // changed and the address not, with the directory told the whole thing failed.
           const refused = "Another user in this organization already has that address.";
           await recordDirectoryEvent({
             db,
@@ -232,10 +211,8 @@ export function directoryStoreFor(context: {
       if (!row) return { refused: "No such user." };
 
       if (!active) {
-        // Deactivation is never just a flag. Somebody's open items have to go
-        // somewhere, and a directory event at 3am has nobody to ask — see
-        // src/lib/offboarding.ts, which is the same code the team page uses
-        // with a human-named successor instead of the oldest active owner.
+        // moveLocations stays false: a directory-triggered handover must not grant the
+        // successor sites nobody assigned them.
         const result = await deactivateInternalUser({
           db,
           userId: row.id,
@@ -252,7 +229,6 @@ export function directoryStoreFor(context: {
           connectionId,
         });
         if (!result.ok) return { refused: result.refused };
-        // Whatever their groups mean now, not what they meant when they left.
         await applyGrants({ db, tenantId, internalUserId: row.id });
       }
 
@@ -292,10 +268,8 @@ export function directoryStoreFor(context: {
     },
 
     async upsertGroup(group) {
-      // Created inert: `mappedRole` stays null and no locations are attached,
-      // so a group arriving from a directory grants nothing at all until an
-      // owner here decides what it means. A group appearing is a customer
-      // telling us it exists, not telling us what it entitles anyone to.
+      // Created inert: no mapped role, no locations. A pushed group grants nothing until
+      // an owner here decides what it means.
       const existing = await db.directoryGroup.findUnique({
         where: { connectionId_externalRef: { connectionId, externalRef: group.externalRef } },
         select: { id: true },
@@ -334,7 +308,6 @@ export function directoryStoreFor(context: {
       await db.directoryGroupLocation.deleteMany({ where: { groupId: group.id } });
       await db.directoryGroup.delete({ where: { id: group.id } });
 
-      // Withdraw what this group granted, and only what it granted.
       for (const internalUserId of affected) {
         await applyGrants({ db, tenantId, internalUserId });
       }
@@ -396,10 +369,8 @@ export function directoryStoreFor(context: {
   }
 
   /**
-   * Member identifiers are the directory's, and are resolved inside this
-   * tenant. An id belonging to somebody else's organization simply finds
-   * nobody — which is the tenant boundary doing its job silently, rather than
-   * an error that would tell a caller the id exists somewhere.
+   * An id from another tenant resolves to nobody rather than erroring: an error would
+   * confirm to a caller that the id exists somewhere.
    */
   async function resolveMembers(memberRefs: string[]): Promise<string[]> {
     if (memberRefs.length === 0) return [];

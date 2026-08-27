@@ -3,14 +3,6 @@ import { handleDirectoryRequest } from "./handle";
 import { createMemoryStore } from "../testing/memory-store";
 import type { DirectoryRequest, DirectoryUser } from "../types";
 
-// The directory protocol, translated.
-//
-// The point of most of these is one sentence: a deactivation must never be
-// answered with a 200 unless it happened. A directory records a 200 as done
-// and stops retrying, so a shape we failed to understand and quietly ignored
-// leaves someone who has left with their access, and the directory's own
-// console showing green.
-
 const SEED: DirectoryUser[] = [
   { externalRef: "00uCASEY", email: "casey@acme.test", name: "Casey Buyer", active: true },
 ];
@@ -49,8 +41,6 @@ describe("users", () => {
       request({ segments: ["Users"], query: { filter: 'userName sw "ca"' } }),
       store
     );
-    // Silently ignoring the clause would answer "who is casey?" with the
-    // whole tenant.
     expect(response.status).toBe(400);
   });
 
@@ -88,8 +78,7 @@ describe("users", () => {
   });
 
   describe("deactivation", () => {
-    // Every shape below is one a real directory sends, and all of them mean
-    // the same thing.
+    // Every shape below is one a real directory sends.
     const shapes: { name: string; body: unknown }[] = [
       { name: "a pathless replace carrying an object", body: { Operations: [{ op: "replace", value: { active: false } }] } },
       { name: "a replace with an explicit path", body: { Operations: [{ op: "replace", path: "active", value: false }] } },
@@ -131,8 +120,6 @@ describe("users", () => {
         store
       );
       expect(response.status).toBe(204);
-      // Every order this person issued and every item they resolved points at
-      // this row.
       expect(store.users.has("00uCASEY")).toBe(true);
       expect(store.users.get("00uCASEY")!.active).toBe(false);
     });

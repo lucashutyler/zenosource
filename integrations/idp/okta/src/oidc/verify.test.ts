@@ -6,11 +6,6 @@ import { createFakeOkta } from "../testing/fake-okta";
 import type { OktaConfig, OktaSecrets } from "../config";
 import type { SignInCallback, SignInExpectations } from "../types";
 
-// The OpenID Connect half, attacked.
-//
-// The fixture mints genuinely RS256-signed tokens against a real key set, so
-// each negative here exercises the verifier rather than a mock.
-
 const CALLBACK = "https://app.zenosource.test/api/sso/acme/callback";
 
 let fake: ReturnType<typeof createFakeOkta>;
@@ -18,8 +13,8 @@ let config: OktaConfig;
 const secrets: OktaSecrets = { clientSecret: "zenosource-dev-secret" };
 
 beforeEach(() => {
-  // A distinct issuer per spec, and a cleared key-set cache, so one test's
-  // keys can never answer another's.
+  // A distinct issuer and a cleared cache per spec, so one test's keys can
+  // never answer another's.
   resetJwksCache();
   fake = createFakeOkta({ issuer: `https://acme-${Math.random().toString(36).slice(2)}.okta.test/oauth2/default` });
   config = { protocol: "OIDC", issuer: fake.issuer, clientId: fake.clientId };
@@ -57,8 +52,7 @@ describe("starting a sign-in", () => {
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("response_type")).toBe("code");
     expect(url.searchParams.get("code_challenge")).toBe(codeChallengeFor(started.codeVerifier!));
-    // The opaque handle, and nothing else. Anything interpretable as a URL in
-    // this slot is an open redirect waiting for a careless refactor.
+    // Anything interpretable as a URL in this slot is an open redirect.
     expect(url.searchParams.get("state")).toBe("handle-abc");
   });
 
@@ -90,9 +84,6 @@ describe("a valid sign-in", () => {
 
 describe("token verification", () => {
   it("refuses a token signed with an algorithm we do not accept", async () => {
-    // The confusion attack: the token's own header picks the algorithm, so
-    // the attacker picks whether verifying needs a private key at all. The
-    // allowlist is ours, never the token's.
     const { callback, expectations } = await roundTrip();
     const forged = await new SignJWT({ sub: "attacker", email: ATTACKER, nonce: expectations.expectedNonce })
       .setProtectedHeader({ alg: "HS256" })
@@ -154,7 +145,6 @@ describe("token verification", () => {
     const result = await completeSignIn(fake.fetchImpl, config, secrets, callback, expectations);
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    // An admin gets a sentence they can act on, not "sign-in failed".
     expect(result.kind).toBe("MISCONFIGURED");
     expect(result.detail).toMatch(/email/i);
   });
@@ -186,8 +176,6 @@ describe("token verification", () => {
     );
     expect(result.ok).toBe(true);
 
-    // Same identity provider, different application — which is exactly the
-    // shape of two ZenoSource tenants inside one Okta org.
     const other = await roundTrip();
     const crossed = await completeSignIn(
       fake.fetchImpl,
@@ -247,9 +235,8 @@ describe("token verification", () => {
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    // The difference matters: MISCONFIGURED marks the connection broken and
-    // opens a reconnect item; REJECTED would leave a broken connection
-    // looking healthy while nobody could sign in.
+    // REJECTED would leave a broken connection looking healthy while nobody
+    // could sign in.
     expect(result.kind).toBe("MISCONFIGURED");
   });
 
@@ -265,8 +252,6 @@ describe("token verification", () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // The front-channel token was never read: the identity is the one the
-    // back-channel exchange returned.
     expect(result.identity.email).toBe("buyer@acme.test");
   });
 
@@ -293,8 +278,6 @@ const ATTACKER = "attacker@evil.test";
 
 describe("the access-token binding", () => {
   it("computes the left half of the SHA-256, base64url", () => {
-    // Pinned so a refactor cannot quietly change it into something that
-    // always matches.
     expect(accessTokenHash("abc")).toBe("ungWv48Bz-pBQUDeXa4iIw");
   });
 });

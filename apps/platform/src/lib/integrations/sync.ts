@@ -79,9 +79,8 @@ export async function runSync(params: {
 
   const definition = getIntegration(integrationId);
   if (definition?.type === "idp") {
-    // Reachable only by someone constructing the call by hand, but the
-    // message matters: "no connector is registered for okta" would send
-    // whoever reads it looking for a missing registration that is not missing.
+    // Not left to the check below: "no connector is registered" would send
+    // whoever reads it looking for a registration that is not missing.
     throw new Error(`${definition.name} is an identity provider — there is nothing to sync.`);
   }
 

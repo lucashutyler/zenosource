@@ -1,18 +1,7 @@
 import type { ParseOutcome } from "./parse";
 
-// PATCH, which is where a directory says "this person has left".
-//
-// The shapes below are all in use in the wild, from the same vendor:
-//
-//   { op: "replace", value: { active: false } }
-//   { op: "replace", path: "active", value: false }
-//   { op: "Replace", path: "active", value: "False" }
-//   { op: "add",     path: "members", value: [{ value: "00u..." }] }
-//   { op: "remove",  path: "members[value eq \"00u...\"]" }
-//
-// Anything not matched here is a 400. Not a 200-with-no-effect: the directory
-// records a 200 as success and stops retrying, and the deactivation that
-// silently did nothing is the failure this whole file exists to prevent.
+// A shape not matched here is an error, never a silent no-op: a 200 stops the
+// directory retrying a deactivation that did not happen.
 
 export const PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
 
@@ -101,7 +90,6 @@ export function parseUserPatch(body: unknown): ParseOutcome<UserPatch> {
     const path = text(operation.path);
 
     if (!path) {
-      // The pathless form carries a whole object of attributes to merge.
       const value = record(operation.value);
       if (!value) return { ok: false, detail: "A patch operation has no path and no object value." };
       for (const [key, raw] of Object.entries(value)) {
@@ -121,9 +109,8 @@ export function parseUserPatch(body: unknown): ParseOutcome<UserPatch> {
             [text(name?.givenName), text(name?.familyName)].filter(Boolean).join(" ");
           if (formatted) patch.name = formatted;
         }
-        // Anything else is a directory attribute this product does not model.
-        // Ignoring it is correct — unlike `active`, no other attribute here
-        // can silently fail to revoke access.
+        // Other attributes are ignored on purpose: unlike `active`, none of
+        // them can silently fail to revoke access.
       }
       continue;
     }
@@ -151,7 +138,6 @@ export function parseUserPatch(body: unknown): ParseOutcome<UserPatch> {
         if (formatted) patch.name = formatted;
       }
     }
-    // Other paths are attributes this product does not carry.
   }
 
   if (Object.keys(patch).length === 0) {
@@ -178,8 +164,8 @@ export function parseGroupPatch(body: unknown): ParseOutcome<GroupPatch> {
       if (path.toLowerCase() === "members") {
         const refs = memberValues(operation.value);
         if (refs === null) {
-          // A bare `remove members` with no value means "empty the group",
-          // which is a membership change we must not guess at.
+          // A bare `remove members` would mean "empty the group", which is a
+          // membership change we must not guess at.
           return { ok: false, detail: "A member removal carries no identifier." };
         }
         patch.remove.push(...refs);

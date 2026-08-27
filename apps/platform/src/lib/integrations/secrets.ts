@@ -24,14 +24,11 @@ import "server-only";
 // auth boundaries". The format is versioned precisely so that upgrade is a
 // re-seal pass and not a schema change.
 //
-// Not everything credential-shaped belongs here. A directory bearer token is
-// hashed rather than sealed (src/lib/auth/directory-tokens.ts), because this
-// scheme is reversible for values we have to replay outbound, and a token we
-// only ever verify is looked *up* by what somebody presents — which a fresh
-// IV per value makes impossible.
+// A directory bearer token is hashed rather than sealed: a token is looked
+// *up* by what somebody presents, which a fresh IV per value makes impossible.
 //
-// This file is the marker; the implementation is secret-box.ts, which
-// prisma/seed.ts imports directly because it runs outside Next's bundler.
+// prisma/seed.ts imports secret-box.ts directly, because it runs outside
+// Next's bundler.
 
 export {
   sealSecrets,

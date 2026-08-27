@@ -8,27 +8,6 @@ import type {
   SignInResult,
 } from "../types";
 
-// The only file in this package that imports @node-saml/node-saml.
-//
-// Why a dependency at all, when the rest of this repo hand-rolls the things
-// whose semantics matter — the session cookie, the credential sealing, the
-// whole connector contract? Because the choice here is not "node:crypto
-// versus a library". Node ships RSA verification and no XML parser, so
-// hand-rolling means writing exclusive canonicalisation, XML-DSig reference
-// processing, and an XML parser to run them over. Three specifications, no
-// partial credit, and the failure mode of getting canonicalisation subtly
-// wrong is not a broken sign-in — it is a document that verifies when it
-// should not. Epicor's zero-dependency rule is that package's rule, with a
-// bundle-weight reason that does not reach this case; see this package's
-// CLAUDE.md for the restatement.
-//
-// The library is not treated as the boundary. guards.ts runs before and after
-// it and re-asserts what a signature verifier cannot know — see that file.
-// Every permissive default is pinned below rather than inherited, because a
-// default that changes in a minor release is a security property that
-// changed without anyone reading a diff.
-
-/** Tolerated clock difference between us and the identity provider. */
 export const CLOCK_SKEW_MS = 60_000;
 
 /** How old an assertion may be regardless of its own stated window. */
@@ -89,7 +68,6 @@ export async function completeSignIn(
     };
   }
 
-  // Structure first: a document this refuses never reaches a verifier.
   const structure = guardStructure(parsed.doc, { trustedCertificates: certificates });
   if (!structure.ok) return { ok: false, kind: "UNTRUSTED", detail: structure.detail };
 
@@ -107,25 +85,19 @@ export async function completeSignIn(
     callbackUrl: expectations.callbackUrl,
     audience: expectations.serviceProviderRef,
     idpIssuer: config.idpEntityId,
-    // The assertion signature is required unconditionally. The response
-    // signature follows the customer's own setting, because requiring one
-    // that their identity provider was never asked to add rejects every valid
-    // sign-in, and assuming one is absent when it is present verifies less
-    // than we could.
+    // The response signature follows the customer's own setting: requiring one
+    // their identity provider was never asked to add rejects every valid sign-in.
     wantAssertionsSigned: true,
     wantAuthnResponseSigned: config.responseSigned === true,
-    // Ours to enforce, not the library's: its in-flight cache is per-process,
-    // so on more than one instance it rejects valid responses, and it would
-    // be a second, weaker copy of the single-use row the platform already
-    // consumes atomically. guardBindings above is where this is checked.
+    // Ours to enforce, not the library's: its in-flight cache is per-process, so on
+    // more than one instance it rejects valid responses. guardBindings checks it.
     validateInResponseTo: "never" as never,
     acceptedClockSkewMs: CLOCK_SKEW_MS,
     maxAssertionAgeMs: MAX_ASSERTION_AGE_MS,
     signatureAlgorithm: "sha256",
     digestAlgorithm: "sha256",
     wantAssertionsEncrypted: false,
-    // Never used — this connector only ever verifies. Named so that a future
-    // change that starts signing has to add a key deliberately.
+    // Named so that a change that starts signing has to add a key deliberately.
     privateKey: undefined,
   } as ConstructorParameters<typeof SAML>[0]);
 
@@ -135,8 +107,7 @@ export async function completeSignIn(
     profile = (validated.profile ?? {}) as Profile;
   } catch (thrown) {
     if (thrown instanceof SamlStatusError) {
-      // The identity provider itself declined — the person cancelled, or
-      // policy refused them. Nothing about this connection is broken.
+      // The identity provider itself declined; nothing about this connection is broken.
       return { ok: false, kind: "REJECTED", detail: thrown.message };
     }
     const message = thrown instanceof Error ? thrown.message : String(thrown);
@@ -150,8 +121,7 @@ export async function completeSignIn(
   }
 
   // Re-asserted against the profile the library built from the assertion it
-  // actually verified, so a document that satisfied the guards but produced a
-  // profile from somewhere else cannot slip through.
+  // verified, so a guard-passing document with a profile from elsewhere cannot pass.
   if ((profile.inResponseTo ?? "") !== expectations.expectedRequestId) {
     return {
       ok: false,
@@ -179,9 +149,8 @@ export async function completeSignIn(
     };
   }
 
-  // The stable subject, and the one thing that must not be the email: a
-  // directory can change someone's address, and an account matched on a
-  // mutable value is an account someone else can be handed.
+  // Never the email: a directory can change someone's address, and an account
+  // matched on a mutable value is an account someone else can be handed.
   const subject =
     claim(profile, "http://schemas.microsoft.com/identity/claims/objectidentifier", "externalId") ??
     profile.nameID ??

@@ -1,10 +1,5 @@
 import type { DirectoryGroupRecord, DirectoryUser } from "../types";
 
-// Every schema identifier the directory protocol uses lives in this package,
-// and this file is where they are written. apps/platform/src never sees one —
-// the platform hands down canonical records and gets back a status, headers
-// and a body it does not inspect.
-
 export const USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
 export const GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group";
 export const LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
@@ -32,8 +27,6 @@ export function renderUser(user: DirectoryUser): Record<string, unknown> {
     name: { givenName, familyName, formatted: user.name },
     displayName: user.name,
     emails: [{ primary: true, value: user.email, type: "work" }],
-    // The attribute a directory reads back after a deactivation to confirm it
-    // took. Reporting it wrong is worse than refusing the write.
     active: user.active,
     meta: { resourceType: "User" },
   };
@@ -59,8 +52,8 @@ export function renderList(
   return {
     schemas: [LIST_SCHEMA],
     totalResults: options.total,
-    // 1-based, and it has to be echoed back rather than recomputed: a client
-    // paging through compares what it asked for with what it got.
+    // 1-based, and echoed back rather than recomputed: a client compares it
+    // against what it asked for.
     startIndex: options.startIndex,
     itemsPerPage: resources.length,
     Resources: resources,
@@ -82,9 +75,8 @@ export function renderError(
 }
 
 /**
- * What this service will and will not do, answered honestly. A directory that
- * is told bulk operations are supported will use them, and an unimplemented
- * endpoint returning 404 mid-import is a half-provisioned tenant.
+ * A directory uses whatever this advertises, so a `supported: false` here must
+ * stay false until the endpoint actually exists.
  */
 export function renderServiceProviderConfig(): Record<string, unknown> {
   return {

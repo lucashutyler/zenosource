@@ -1,31 +1,6 @@
 import { DOMParser } from "@xmldom/xmldom";
 import { normalizeCertificate } from "../metadata";
 
-// What the library cannot know, asserted here.
-//
-// @node-saml/node-saml verifies a signature correctly. What it cannot decide
-// for us is which document we are willing to have verified in the first
-// place, and that is where signature-wrapping lives: the classic attack does
-// not forge a signature, it presents a document containing one genuinely
-// signed element and one forged element, and relies on the verifier checking
-// the former while the application reads the latter.
-//
-// Three separate mitigations, because any one of them alone has been bypassed
-// somewhere:
-//
-//   1. Exactly one assertion in the document. An attack that needs to smuggle
-//      a second element in has nowhere to put it.
-//   2. Every ID in the document is unique, and every signature reference
-//      points at its own parent. A reference that reaches sideways is a
-//      reference into somebody else's element.
-//   3. The transform list is an allowlist of exactly two, so no XPath or XSLT
-//      transform can change what the digest actually covered.
-//
-// And separately: the certificate embedded in the document is used only to
-// *select* which of the tenant's stored certificates to compare against. It
-// is never used to verify. A document that nominates the key used to trust it
-// is not evidence of anything.
-
 const PROTOCOL_NS = "urn:oasis:names:tc:SAML:2.0:protocol";
 const ASSERTION_NS = "urn:oasis:names:tc:SAML:2.0:assertion";
 const DS_NS = "http://www.w3.org/2000/09/xmldsig#";
@@ -45,7 +20,6 @@ const DIGEST_ALGORITHMS = new Set([
   "http://www.w3.org/2001/04/xmlenc#sha512",
 ]);
 
-/** 1 MB decoded. A response is a few kilobytes; a megabyte is an attack. */
 export const MAX_RESPONSE_BYTES = 1_000_000;
 
 export type GuardFailure = { ok: false; detail: string };
@@ -57,7 +31,6 @@ function fail(detail: string): GuardFailure {
 }
 
 /**
- * Everything that must be true before an XML parser is handed the bytes.
  * A document type declaration has no legitimate place in a SAML response and
  * is how entity expansion and external entity resolution both start.
  */
@@ -113,7 +86,6 @@ function elements(doc: Document | Element, ns: string, name: string): Element[] 
   return list;
 }
 
-/** Every element in the document, regardless of namespace. */
 function allElements(doc: Document): Element[] {
   const found = doc.getElementsByTagName("*");
   const list: Element[] = [];
@@ -123,7 +95,6 @@ function allElements(doc: Document): Element[] {
 
 const COMMENT_NODE = 8;
 
-/** Whether a comment appears anywhere inside this element's subtree. */
 function containsComment(node: Node): boolean {
   const children = node.childNodes;
   for (let i = 0; i < children.length; i++) {
@@ -134,11 +105,6 @@ function containsComment(node: Node): boolean {
   return false;
 }
 
-/**
- * The structural half: what shape of document we are willing to trust at all.
- * Run before the signature check as well as after, because a document this
- * refuses should never reach a verifier in the first place.
- */
 export function guardStructure(
   doc: Document,
   options: { trustedCertificates: string[] }
@@ -148,19 +114,13 @@ export function guardStructure(
     return fail("That sign-in response carries no assertion.");
   }
   if (assertions.length > 1) {
-    // The single most common signature-wrapping shape. Refusing outright
-    // costs nothing: no identity provider sends two.
+    // The commonest signature-wrapping shape, and no identity provider sends two.
     return fail("That sign-in response carries more than one assertion.");
   }
 
-  // No comments inside the assertion. Canonicalisation drops them, so a
-  // comment inserted mid-value leaves the digest intact while splitting one
-  // text node into two — and any reader that takes the first one sees a
-  // truncated value. That is the shape behind CVE-2025-29775 and several
-  // before it. The library this package uses concatenates the nodes correctly
-  // today, which is exactly why this is worth asserting: the guard has to
-  // survive the library being swapped or a default changing. No identity
-  // provider puts a comment in an assertion, so refusing costs nothing.
+  // Canonicalisation drops comments, so one inserted mid-value leaves the digest
+  // intact while splitting a text node in two — CVE-2025-29775. No identity
+  // provider puts a comment in an assertion.
   if (containsComment(assertions[0])) {
     return fail("That sign-in response has a comment inside its assertion.");
   }
@@ -201,9 +161,8 @@ export function guardStructure(
     }
     const uri = references[0].getAttribute("URI") ?? "";
     if (uri !== `#${parentId}`) {
-      // A reference that points anywhere but at its own parent is the
-      // wrapping attack in its purest form: the signature is real, and it is
-      // over something other than what will be read.
+      // A reference pointing anywhere but at its own parent is the wrapping
+      // attack: the signature is real, and over something other than what is read.
       return fail("That sign-in response has a signature that does not cover the element it sits in.");
     }
 
@@ -211,9 +170,8 @@ export function guardStructure(
       .map((t) => t.getAttribute("Algorithm") ?? "")
       .filter(Boolean);
     if (transforms.length !== 2 || transforms[0] !== ENVELOPED || transforms[1] !== EXC_C14N) {
-      // Anything else — an XPath transform, an XSLT, a with-comments
-      // canonicalisation — changes what the digest actually covered relative
-      // to what a reader sees.
+      // An XPath, an XSLT or a with-comments canonicalisation changes what the
+      // digest covered relative to what a reader sees.
       return fail("That sign-in response uses a signature transform that isn't accepted.");
     }
 
@@ -249,13 +207,9 @@ export function guardStructure(
 }
 
 /**
- * The binding half: that this document was addressed to us, for us, and in
- * answer to a question we actually asked.
- *
- * `expectedRequestId` is the whole reason an unsolicited assertion cannot be
- * used here. It is required, not optional — an identity-provider-initiated
- * sign-in has no such value by definition, and accepting one would mean the
- * only replay window is the assertion's own validity period.
+ * `expectedRequestId` is required, not optional: an identity-provider-initiated
+ * sign-in has no such value, and accepting one would leave the assertion's own
+ * validity period as the only replay window.
  */
 export function guardBindings(
   doc: Document,
@@ -314,9 +268,8 @@ export function guardBindings(
   if (audiences.length === 0) {
     return fail("That sign-in response names no audience.");
   }
-  // The per-tenant service-provider identifier is what stops an assertion
-  // minted for one customer being replayed at another, even when both
-  // federate with the same identity provider.
+  // The per-tenant identifier is what stops an assertion minted for one customer
+  // being replayed at another that federates with the same identity provider.
   if (!audiences.includes(expectations.serviceProviderRef)) {
     return fail("That sign-in response was issued for a different organization.");
   }

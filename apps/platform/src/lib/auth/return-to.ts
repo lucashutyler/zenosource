@@ -1,22 +1,12 @@
 import "server-only";
 
-// Where to land after signing in.
-//
-// An open redirect through a sign-in flow is the classic phishing primitive: a
-// link that genuinely goes to the real product, genuinely signs someone in,
-// and then puts them somewhere that isn't. The main defence is structural
-// rather than a filter — the value an identity provider echoes back carries an
-// opaque handle and nothing else, so no code path interprets an identity
-// provider's string as a URL at all. This function guards the other end: the
-// path a user's own browser asked for before the round trip started.
-//
-// Applied twice, at store time and again at redirect time. Once would do
-// today; twice survives someone later writing to the column directly.
+// Guards the path a user's own browser asked for before the round trip. An
+// open redirect through a sign-in flow is a phishing primitive: a link that
+// really does sign someone in, and then lands them somewhere else.
 
 const FALLBACK = "/dashboard";
 
-// Control characters, including the newline that would otherwise let this
-// value be spliced into a Location header.
+// The newline would otherwise splice this value into a Location header.
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
 export function safeReturnTo(value: string | null | undefined): string {

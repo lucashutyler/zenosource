@@ -5,12 +5,7 @@ import { getIdpConnector } from "@/lib/integrations/connectors";
 import { sessionFor } from "@/lib/integrations/connections";
 import { ssoCallbackUrl, serviceProviderRef } from "@/lib/auth/urls";
 
-// The document a customer's identity-provider admin imports at their end.
-//
-// Rendered entirely by the connector: the platform hands it two URLs and
-// returns whatever comes back verbatim, so no element name belonging to a
-// federation protocol is written anywhere in apps/platform/src. Public by
-// design — it contains two URLs a customer already knows and no secret.
+// Public by design: two URLs the customer already knows, and no secret.
 export const runtime = "nodejs";
 
 export async function GET(

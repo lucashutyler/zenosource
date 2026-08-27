@@ -3,31 +3,6 @@ import { db } from "@/lib/db";
 import { recordDirectoryEvent } from "./audit";
 import type { PrismaClient } from "@/generated/prisma/client";
 
-// What membership of a pushed group is allowed to grant, and how a grant is
-// withdrawn again.
-//
-// Two rules, and both exist because the alternative is a privilege escalation
-// that nobody in this product can see happening:
-//
-//   1. **A group may never grant OWNER.** src/app/actions/integrations.ts
-//      calls OWNER "a strictly larger permission than anything else in the
-//      product" — it stores ERP service-account credentials, it issues these
-//      directory tokens, it disconnects integrations. Somebody renaming a
-//      group in their own identity provider's console must not be able to
-//      reach any of that. A mapping that asks for it is refused in code, not
-//      merely absent from the form, and the refusal is recorded.
-//
-//   2. **A hand-made grant always wins.** `@@unique([internalUserId,
-//      locationId])` means one row cannot carry both provenances, so the
-//      precedence has to be decided rather than emerge. A directory push
-//      never overwrites or revokes a MANUAL row: an owner who assigned
-//      somebody to a site by hand did so for a reason nobody will remember to
-//      recreate, and losing it silently is how a buyer's board empties
-//      overnight.
-//
-// An unmapped group grants nothing at all. Pushing a group is a customer
-// telling us it exists; mapping it is an owner here deciding what it means.
-
 export type GrantOutcome = {
   role: "OWNER" | "MEMBER" | null;
   locationsAdded: number;
@@ -49,7 +24,6 @@ export async function setGroupMapping(params: {
   });
   if (!group) return { ok: false, refused: "No such group." };
 
-  // Rule 1, enforced where it cannot be bypassed by a crafted request.
   if ((params.role as string) === "OWNER") {
     const refused =
       "A directory group can't grant owner. Owner can store ERP credentials and issue " +
@@ -66,10 +40,8 @@ export async function setGroupMapping(params: {
     return { ok: false, refused };
   }
 
-  // Never trust location ids from a form — the same rule
-  // src/lib/access.ts#allLocationsBelongToTenant states for PO and RFQ lines.
-  // A location from another tenant attached here would put that tenant's site
-  // name on this one's screens and grant access across the boundary.
+  // Location ids from a form are never trusted: one belonging to another tenant
+  // would grant access across the tenant boundary.
   const unique = [...new Set(params.locationIds)];
   if (unique.length > 0) {
     const found = await client.location.findMany({
@@ -99,13 +71,10 @@ export async function setGroupMapping(params: {
     detail: { mappedRole: params.role, locationIds: unique },
   });
 
-  // A mapping made on Tuesday has to reach Monday's members, or an owner maps
-  // a group, sees nothing change, and maps it again.
   await recomputeForGroup({ db: client, tenantId: params.tenantId, groupId: group.id });
   return { ok: true };
 }
 
-/** Everyone in one group, after that group's meaning changed. */
 export async function recomputeForGroup(params: {
   db?: PrismaClient;
   tenantId: string;
@@ -122,13 +91,9 @@ export async function recomputeForGroup(params: {
 }
 
 /**
- * Recompute one person's directory-granted access from scratch.
- *
- * Deliberately a full recompute rather than a diff. Membership changes arrive
- * as adds and removes, mappings change independently of membership, and a
- * group can be deleted outright — three sources of drift, and reconciling them
- * incrementally is how somebody ends up holding a site nobody meant them to
- * have. Recomputing is a handful of queries and is always right.
+ * Full recompute rather than a diff: membership, mappings and group deletion drift
+ * independently, and reconciling them incrementally leaves somebody holding a site
+ * nobody granted.
  */
 export async function applyGrants(params: {
   db?: PrismaClient;
@@ -154,9 +119,6 @@ export async function applyGrants(params: {
 
   const mapped = memberships.map((m) => m.group).filter((g) => g.mappedRole !== null);
 
-  // Which location each mapped group grants, and which group granted it — the
-  // second half matters because withdrawing a grant has to withdraw only the
-  // rows the group that stopped applying had issued.
   const wanted = new Map<string, string>();
   for (const group of mapped) {
     for (const { locationId } of group.locations) {
@@ -170,7 +132,7 @@ export async function applyGrants(params: {
 
   let locationsRemoved = 0;
   for (const row of existing) {
-    if (row.source !== "DIRECTORY") continue; // rule 2: a manual grant stands
+    if (row.source !== "DIRECTORY") continue; // a manual grant is never revoked by a directory push
     if (wanted.has(row.locationId)) continue;
     await client.internalUserLocation.delete({ where: { id: row.id } });
     locationsRemoved++;
@@ -190,9 +152,8 @@ export async function applyGrants(params: {
     locationsAdded++;
   }
 
-  // Role: MEMBER if any mapped group says so, and never a demotion of an
-  // existing OWNER. An owner who also happens to be in a pushed group must not
-  // lose the product's largest permission because of a group's mapping.
+  // Never a demotion: an existing OWNER in a mapped group must not lose owner
+  // because that group maps MEMBER.
   let role: "OWNER" | "MEMBER" | null = null;
   if (user.role !== "OWNER" && mapped.some((g) => g.mappedRole === "MEMBER")) {
     role = "MEMBER";

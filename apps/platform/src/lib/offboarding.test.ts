@@ -4,13 +4,6 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { deactivateInternalUser, handOverOpenWork, reactivateInternalUser } from "./offboarding";
 import { wipeTestDb } from "@/lib/testing/wipe-test-db";
 
-// "Nothing survives the second person" was a named hole in docs/todo.md: an
-// item owned by somebody who left looks fine to everyone else, because every
-// count on the board is scoped to its owner. Phase 1b closed it for the case
-// where an owner clicks a button and names a successor. This is the other
-// case — a directory saying so at 3am, with nobody to ask — and it is the same
-// code with a different policy, which is what these assert.
-
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const db = new PrismaClient({ adapter });
 
@@ -91,8 +84,7 @@ describe("a directory deactivation", () => {
 
     const after = await db.actionItem.findUnique({ where: { id: item.id } });
     expect(after?.internalOwnerId).toBe(owner.id);
-    // Still open, and its clock never restarted: the work is late by however
-    // long it has been late, not by however long since somebody resigned.
+    // Its clock never restarts: the work is late by however long it has been late.
     expect(after?.status).toBe("OPEN");
     expect(after?.openedAt.getTime()).toBe(item.openedAt.getTime());
   });
@@ -105,9 +97,8 @@ describe("a directory deactivation", () => {
   });
 
   it("does not hand the leaver's locations to the successor", async () => {
-    // An owner is unrestricted already (access.ts), so they can resolve
-    // anything. Copying locations here would be a privilege grant issued by an
-    // offboarding, which is the opposite of what an offboarding is for.
+    // An owner is unrestricted already, so copying locations here would be a privilege
+    // grant issued by an offboarding.
     const { owner, leaver } = await scenario();
     await deactivateInternalUser({ db, userId: leaver.id, source: "DIRECTORY" });
 
@@ -127,8 +118,7 @@ describe("a directory deactivation", () => {
     const assignment = await db.internalUserLocation.findFirst({
       where: { internalUserId: owner.id, locationId: location.id },
     });
-    // And it arrives as a hand-made grant, so the next directory push cannot
-    // revoke work somebody was deliberately handed.
+    // A hand-made grant, so the next directory push cannot revoke it.
     expect(assignment?.source).toBe("MANUAL");
   });
 
@@ -164,7 +154,6 @@ describe("a directory deactivation", () => {
     await reactivateInternalUser({ db, userId: leaver.id, source: "DIRECTORY" });
     const back = await db.internalUser.findUnique({ where: { id: leaver.id } });
     expect(back?.status).toBe("ACTIVE");
-    // An owner has to say so again.
     expect(back?.role).toBe("MEMBER");
   });
 
@@ -177,8 +166,6 @@ describe("a directory deactivation", () => {
   });
 
   it("keeps the row, so every record that points at it survives", async () => {
-    // Cancelled-by attribution, resolved-by attribution, status-event history:
-    // all of it hangs off this id, and the scorecards are built from it.
     const { leaver } = await scenario();
     await deactivateInternalUser({ db, userId: leaver.id, source: "DIRECTORY" });
     expect(await db.internalUser.findUnique({ where: { id: leaver.id } })).not.toBeNull();
@@ -218,7 +205,6 @@ describe("handOverOpenWork", () => {
     });
     expect(moved).toBe(1);
     expect((await db.actionItem.findUnique({ where: { id: item.id } }))?.internalOwnerId).toBe(owner.id);
-    // History stays attributed to whoever actually did it.
     expect((await db.actionItem.findUnique({ where: { id: resolved.id } }))?.internalOwnerId).toBe(
       leaver.id
     );

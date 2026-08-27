@@ -1,8 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Runs against the test database on a dedicated port (3100) so it never
-// touches whatever's running on the normal dev server (3000) or its data.
-// `npm run test:e2e` seeds the test DB fresh before starting.
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false, // shared DB state across specs — keep it sequential
@@ -22,22 +19,8 @@ export default defineConfig({
       env: { E2E_DIST_DIR: ".next-e2e" }, // separate build dir — see next.config.ts
     },
     {
-      // The scripted identity provider the federated sign-in specs run
-      // against — the same one `npm run fake-idp` starts for local
-      // development, and the same one prisma/seed.ts points the seeded
-      // connection at.
-      //
-      // A webServer rather than something started in globalSetup, because
-      // Playwright owns the lifetime here: it waits for the URL below before
-      // any test runs and tears it down afterwards. Started from globalSetup
-      // it was up when setup logged it and gone by the time a browser tried
-      // to reach it, which reads as a broken sign-in rather than as a missing
-      // fixture — and cost an hour to see.
-      //
-      // Deliberately a separate process and not a route inside the app: an
-      // endpoint that mints signed assertions and ships with the product is an
-      // authentication bypass behind an environment check, and environment
-      // checks get forgotten exactly once.
+      // A webServer rather than a globalSetup process, so Playwright waits for
+      // the URL below and tears it down afterwards.
       command: "dotenv -e .env.test -- tsx scripts/fake-idp.ts",
       url: "http://localhost:3101/.well-known/openid-configuration",
       reuseExistingServer: false,

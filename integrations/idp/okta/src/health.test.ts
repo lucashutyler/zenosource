@@ -27,8 +27,6 @@ describe("health, and what it grants", () => {
       issuer: fake.issuer,
       clientId: fake.clientId,
     });
-    // A feature that unlocks and then cannot work is worse than an absent
-    // one — connections.ts intersects declared capabilities with these.
     expect(report.verifiedCapabilities).not.toContain("sso_saml");
   });
 
@@ -52,9 +50,6 @@ describe("health, and what it grants", () => {
       ssoUrl: fake.ssoUrl,
       certificates: [fake.certificateBody],
     });
-    // A certificate with time left on it is not a broken connection, and
-    // marking it broken would withdraw sign-in a month before anything was
-    // actually wrong.
     expect(report.healthy).toBe(true);
     expect(report.credentialExpiresAt).toBeTruthy();
     expect(new Date(report.credentialExpiresAt!).getTime()).toBeGreaterThan(Date.now());
@@ -102,10 +97,6 @@ describe("health, and what it grants", () => {
       issuer: `${fake.issuer}/somewhere-else`,
       clientId: fake.clientId,
     });
-    // Two different screens, two different people. "We can't reach it" is a
-    // network or a URL typo; "it calls itself something else" is the wrong
-    // authorization server pasted in. Reporting one generic failure sends an
-    // admin to the wrong screen about half the time.
     expect(wrongIssuer.healthy).toBe(false);
     expect(wrongIssuer.failure).toBe("CONFIGURATION");
     expect(wrongIssuer.detail).toMatch(/calls itself/i);

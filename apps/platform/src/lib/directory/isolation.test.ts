@@ -5,18 +5,6 @@ import { directoryStoreFor } from "./store";
 import { issueDirectoryToken, resolveDirectoryToken, bearerFrom } from "@/lib/auth/directory-tokens";
 import { wipeTestDb } from "@/lib/testing/wipe-test-db";
 
-// The assertion docs/integrations.md asks for by name:
-//
-//   "each tenant's Okta connection gets its own SCIM bearer token, and that
-//    token *is* the tenant boundary: a bug that lets one tenant's SCIM token
-//    touch another tenant's users is a severe multi-tenancy breach, not just
-//    a permissions bug."
-//
-// Two real tenants in one database, which is what production is. The seed
-// deliberately has only one — e2e/helpers/db.ts is full of unordered
-// `SELECT … LIMIT 1` lookups that a second seeded tenant would make
-// non-deterministic — so this file creates both itself.
-
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const db = new PrismaClient({ adapter });
 
@@ -86,9 +74,6 @@ describe("one tenant's directory credential cannot reach another's", () => {
   });
 
   it("cannot see the other organization's people, even at the same directory id", async () => {
-    // Both were provisioned with externalRef "00uSHARED", which is exactly
-    // the shape of two customers inside one identity provider whose ids
-    // happen to collide, or of somebody deliberately guessing.
     const a = await organization("iso-a");
     await organization("iso-b");
 
@@ -110,7 +95,6 @@ describe("one tenant's directory credential cannot reach another's", () => {
     const inA = await db.internalUser.findUnique({ where: { id: a.member.id } });
     const inB = await db.internalUser.findUnique({ where: { id: b.member.id } });
     expect(inA?.status).toBe("DEACTIVATED");
-    // The whole point: the write landed in exactly one organization.
     expect(inB?.status).toBe("ACTIVE");
   });
 
@@ -121,9 +105,7 @@ describe("one tenant's directory credential cannot reach another's", () => {
   });
 
   it("writes an address change to its own row even when the address exists elsewhere", async () => {
-    // Email is unique *per tenant* (`@@unique([tenantId, email])`), so the
-    // same address legitimately exists in two organizations. The danger is not
-    // the collision, it is which row a write lands on.
+    // Email is unique per tenant, so the same address legitimately exists in two organizations.
     const a = await organization("iso-a");
     const b = await organization("iso-b");
 
@@ -134,7 +116,6 @@ describe("one tenant's directory credential cannot reach another's", () => {
     const inB = await db.internalUser.findUnique({ where: { id: b.member.id } });
     expect(inA?.email).toBe("person@iso-b.test");
     expect(inA?.tenantId).toBe(a.tenant.id);
-    // B's row is untouched, including its name — nothing crossed over.
     expect(inB?.email).toBe("person@iso-b.test");
     expect(inB?.tenantId).toBe(b.tenant.id);
     expect(inB?.updatedAt.getTime()).toBe(b.member.updatedAt.getTime());
@@ -145,9 +126,7 @@ describe("one tenant's directory credential cannot reach another's", () => {
     const b = await organization("iso-b");
 
     await a.store.upsertGroup({ externalRef: "00gX", displayName: "Buyers" });
-    // "00uSHARED" resolves inside A only, so A's group gets A's person and B's
-    // is untouched — the boundary working silently rather than erroring, which
-    // is right: an error would confirm the id exists somewhere.
+    // Silently rather than as an error: an error would confirm the id exists somewhere.
     await a.store.addGroupMembers("00gX", ["00uSHARED"]);
 
     const members = await a.store.listGroupMembers("00gX");
@@ -180,9 +159,7 @@ describe("one tenant's directory credential cannot reach another's", () => {
   });
 
   it("keeps working while the connection is merely unhealthy", async () => {
-    // A failing health check must not stop a customer deprovisioning someone
-    // who has left — that is the moment provisioning matters most, and their
-    // session is live for up to seven days.
+    // A failing health check must not stop a customer deprovisioning somebody who has left.
     const a = await organization("iso-a");
     await db.integrationConnection.update({
       where: { id: a.connection.id },
@@ -198,7 +175,6 @@ describe("the token itself", () => {
     const row = await db.directoryToken.findUnique({ where: { id: a.token.id } });
     expect(row?.tokenHash).not.toContain(a.token.plaintext);
     expect(row?.tokenHash).toHaveLength(64);
-    // Enough to tell two apart on a settings page, not enough to be one.
     expect(row?.tokenHint).toMatch(/^•{6}/);
     expect(a.token.plaintext).toContain(row!.tokenHint.slice(-4));
   });

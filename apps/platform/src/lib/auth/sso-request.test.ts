@@ -46,9 +46,7 @@ describe("an in-flight sign-in", () => {
   });
 
   it("cannot be used twice", async () => {
-    // A replayed callback is a replayed authorization code. The predicate is
-    // inside the UPDATE, so this holds under concurrency and not merely in
-    // sequence — see the next test.
+    // A replayed callback is a replayed authorization code.
     const t = await tenant();
     const started = await start(t.id);
 
@@ -67,9 +65,6 @@ describe("an in-flight sign-in", () => {
   });
 
   it("is refused in a browser that didn't start it", async () => {
-    // Somebody who obtains a handle — from a log, a referrer, a shoulder —
-    // must not be able to finish the sign-in in their own browser and be
-    // signed in as the person who started it.
     const t = await tenant();
     const started = await start(t.id);
 
@@ -81,8 +76,6 @@ describe("an in-flight sign-in", () => {
     const started = await start(t.id);
 
     expect(await consumeRequest(started.handle, "wrong-cookie")).toBeNull();
-    // The thief burned it. The real browser cannot use it either — which is
-    // the right trade: one failed sign-in beats a usable stolen handle.
     expect(await consumeRequest(started.handle, started.cookieValue)).toBeNull();
   });
 

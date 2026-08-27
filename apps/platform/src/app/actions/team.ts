@@ -10,18 +10,6 @@ import { type FormState, fail, failWith } from "@/lib/form-state";
 
 export type FormActionState = FormState;
 
-// Team management, which did not exist.
-//
-// A buyer organization could not onboard its second procurement person: no
-// invite, no create, no role change, no deactivate, no password reset. The
-// seeded users were the only users the tenant would ever have, and a
-// forgotten password was permanent lockout with no recovery path in the
-// product at all.
-//
-// This is the credentials-only placeholder from Phase 1 (docs/todo.md), not
-// what Okta federation looks like in Phase 3 — but the tenant still has to be
-// able to run itself in the meantime.
-
 function zodFieldErrors(error: z.ZodError): Record<string, string> {
   const fieldErrors: Record<string, string> = {};
   for (const issue of error.issues) {
@@ -89,10 +77,8 @@ export async function setTeamMemberRole(internalUserId: string, role: "OWNER" | 
   });
   if (!target) return;
 
-  // A tenant with no OWNER can't create locations, manage the team, or grant
-  // itself back out of that state — and `pickInternalOwner` falls back to the
-  // OWNER when a supplier rejects a PO, so losing the last one would strand
-  // every future rejection with no internal owner at all.
+  // A tenant with no OWNER cannot manage the team or grant itself back out of
+  // that state, and a rejected PO would have no internal owner to fall back to.
   if (target.role === "OWNER" && role === "MEMBER") {
     const owners = await db.internalUser.count({
       where: { tenantId: user.tenantId, role: "OWNER", status: "ACTIVE" },
@@ -157,9 +143,8 @@ export async function changeOwnPassword(
   if (!record) return failWith(formData, "Not signed in.");
 
   if (!record.passwordHash) {
-    // Signed in through the organization's identity provider, so there is no
-    // password here to change — and setting one from this form would quietly
-    // create a second way into an account the directory is meant to control.
+    // Setting one from here would create a second way into an account the
+    // directory is meant to control.
     return failWith(
       formData,
       "You sign in through your organization's identity provider, so there's no password here to change."
@@ -178,14 +163,7 @@ export async function changeOwnPassword(
   return { ok: "Password changed." };
 }
 
-/**
- * Reassign someone's open work, then step them out of the team.
- *
- * "Nothing survives the second person" was a named hole in the plan: an item
- * owned by someone who left looks fine to everyone else on the board, because
- * every count is scoped to its owner. Handing the work over is the point of
- * this action — removing the person is the easy half.
- */
+/** Reassign someone's open work, then step them out of the team. */
 export async function handOverAndDeactivate(
   internalUserId: string,
   _state: FormActionState,
@@ -215,20 +193,6 @@ export async function handOverAndDeactivate(
     return fail(formData, { successorId: "Choose who picks up their open items." });
   }
 
-  // The mechanics — the last-owner guard, the handover, the location
-  // assignments moving with the work — live in src/lib/offboarding.ts, because
-  // a directory deactivation has to do exactly the same thing at 3am with
-  // nobody to ask. Two implementations of "somebody left" is two chances for
-  // one of them to forget the handover.
-  //
-  // What changed in Phase 3, and why the previous comment here is gone: this
-  // used to rotate the password hash to something unguessable and note that no
-  // status column was needed, since the session layer treats a session
-  // pointing at a missing user as unauthenticated. That held while a password
-  // was the only door. It stopped holding the moment a federated user — who
-  // has no password at all — could sign in, because rotating a null hash locks
-  // out nobody and dal.ts finds the row and lets them straight in. Hence a
-  // real status, read on every request.
   const result = await deactivateInternalUser({
     userId: internalUserId,
     successorId: successor.id,

@@ -5,8 +5,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { wipeTestDb } from "@/lib/testing/wipe-test-db";
 
 // createSession writes a cookie, which needs a request context Vitest doesn't
-// have; redirect() throws a framework-internal signal. Both are stubbed so the
-// assertions below are about who is allowed in, which is the part that matters.
+// have; redirect() throws a framework-internal signal.
 const created: { internalUserId: string; tenantId: string }[] = [];
 vi.mock("@/lib/session", () => ({
   createSession: async (payload: { internalUserId: string; tenantId: string }) => {
@@ -83,10 +82,8 @@ describe("signing in with a password", () => {
   });
 
   it("finds the right organization when one address exists in two", async () => {
-    // Email is unique per tenant, not globally. Phase 1's implementation took
-    // the first match and said so in a comment; with a second door and a
-    // second organization that would sign somebody into the wrong company's
-    // purchase orders.
+    // Email is unique per tenant, not globally: taking the first match signs
+    // somebody into the wrong company's purchase orders.
     const a = await person({ slug: "auth-a", email: "shared@example.test", password: "password-a" });
     const b = await person({ slug: "auth-b", email: "shared@example.test", password: "password-b" });
 
@@ -106,8 +103,7 @@ describe("signing in with a password", () => {
   });
 
   it("refuses a federated account with no password rather than throwing on a null hash", async () => {
-    // bcrypt.compare against null throws, and treating a null hash as a match
-    // would make every single-sign-on user passwordless in the literal sense.
+    // Treating a null hash as a match makes every federated user passwordless.
     await person({ slug: "auth-a", email: "federated@acme.test", password: null });
     const result = await attempt("federated@acme.test", "anything-at-all");
     expect(result).toEqual({ error: "Invalid email or password." });
@@ -115,9 +111,8 @@ describe("signing in with a password", () => {
   });
 
   it("says the same thing however the attempt failed", async () => {
-    // No such address, wrong password, deactivated, no password at all: one
-    // message. Anything more specific tells a stranger which addresses exist
-    // here and which organizations federate.
+    // A more specific message tells a stranger which addresses exist here and
+    // which organizations federate.
     await person({ slug: "auth-a", email: "real@acme.test" });
     const wrong = await attempt("real@acme.test", "not-the-password");
     const missing = await attempt("nobody@acme.test", PASSWORD);

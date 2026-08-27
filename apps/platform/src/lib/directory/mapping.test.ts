@@ -57,8 +57,6 @@ describe("a pushed group", () => {
   });
 
   it("reaches the people already in it when it is mapped", async () => {
-    // A mapping made on Tuesday has to reach Monday's members, or an owner
-    // maps a group, sees nothing happen, and maps it again.
     const { tenant, person, group, chicago } = await scenario();
     const result = await setGroupMapping({
       db,
@@ -122,7 +120,6 @@ describe("a pushed group", () => {
       role: "MEMBER",
       locationIds: [chicago.id],
     });
-    // A hand-made grant alongside it.
     await db.internalUserLocation.create({
       data: { internalUserId: person.id, locationId: austin.id, source: "MANUAL" },
     });
@@ -130,9 +127,6 @@ describe("a pushed group", () => {
     await store.removeGroupMembers("00gBUYERS", ["00uCASEY"]);
 
     const left = await db.internalUserLocation.findMany({ where: { internalUserId: person.id } });
-    // The group's grant is gone; the one an owner made by hand is not. Losing
-    // it silently is how somebody's board empties overnight for a reason
-    // nobody can reconstruct.
     expect(left.map((l) => l.locationId)).toEqual([austin.id]);
     expect(left[0].source).toBe("MANUAL");
   });
@@ -173,7 +167,6 @@ describe("a pushed group", () => {
     await store.deleteGroup("00gBUYERS");
 
     expect(await db.internalUserLocation.count({ where: { internalUserId: person.id } })).toBe(0);
-    // The people stay; only the group goes.
     expect(await db.internalUser.findUnique({ where: { id: person.id } })).not.toBeNull();
   });
 

@@ -1,25 +1,10 @@
 import { DOMParser } from "@xmldom/xmldom";
 
-// Reading a customer's identity-provider metadata document.
-//
-// This is the one place in the package that turns a pasted XML document into
-// a trust anchor, and it is deliberately narrow: an entity id, one sign-in
-// URL, and the signing certificates. Everything else in a metadata document
-// — organisation names, contact people, attribute profiles, encryption keys
-// — is ignored, because nothing downstream is allowed to act on it.
-//
-// The input is trusted differently from an assertion: an admin pastes it into
-// a form while signed in as an OWNER, and what comes out is rendered straight
-// back to them for confirmation. It is still parsed with a real XML parser
-// rather than a regular expression, because a certificate extracted from the
-// wrong element is a trust anchor extracted from the wrong element.
-
 const MD_NS = "urn:oasis:names:tc:SAML:2.0:metadata";
 const DS_NS = "http://www.w3.org/2000/09/xmldsig#";
 const REDIRECT_BINDING = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect";
 const POST_BINDING = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST";
 
-/** 1 MB. A metadata document is a few kilobytes; anything larger is not one. */
 const MAX_BYTES = 1_000_000;
 
 export type IdpMetadata = {
@@ -27,11 +12,8 @@ export type IdpMetadata = {
   /** Where the browser is sent to start a sign-in. Redirect binding preferred. */
   ssoUrl: string;
   /**
-   * Signing certificates, base64 DER with whitespace stripped, in document
-   * order. A list rather than one value on purpose: an identity provider
-   * publishes its next certificate alongside its current one during a
-   * rollover, and treating that as a conflict turns the most routine event in
-   * identity operations into an outage.
+   * Signing certificates, base64 DER, in document order. A list because a
+   * rollover publishes the next certificate beside the current one.
    */
   certificates: string[];
 };
@@ -53,8 +35,7 @@ export function parseIdpMetadata(xml: string): MetadataResult {
   if (Buffer.byteLength(xml, "utf8") > MAX_BYTES) {
     return { ok: false, error: "That document is too large to be identity-provider metadata." };
   }
-  // A metadata document has no legitimate use for a document type
-  // declaration, and accepting one is how entity expansion gets in.
+  // Accepting a DOCTYPE is how entity expansion gets in.
   if (/<!DOCTYPE/i.test(xml)) {
     return { ok: false, error: "That document contains a DOCTYPE declaration, which isn't accepted." };
   }
@@ -104,9 +85,7 @@ export function parseIdpMetadata(xml: string): MetadataResult {
     if (binding === REDIRECT_BINDING) redirect ??= location;
     if (binding === POST_BINDING) post ??= location;
   }
-  // Redirect first: this package builds a redirect-binding request, and an
-  // identity provider that publishes only a POST endpoint needs a different
-  // request shape rather than the same URL used differently.
+  // Redirect first: this package builds a redirect-binding request.
   const ssoUrl = redirect ?? post;
   if (!ssoUrl) return { ok: false, error: "The metadata has no sign-in URL." };
   if (!ssoUrl.startsWith("https://") && !ssoUrl.startsWith("http://localhost")) {

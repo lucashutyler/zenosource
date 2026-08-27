@@ -5,14 +5,6 @@ import type {
   DirectoryUser,
 } from "../types";
 
-// An in-memory directory, for the specs in this package only.
-//
-// It exists to test the *protocol translation* — that a patch shaped one way
-// reaches the store as the same call as a patch shaped another way. The real
-// store, and the multi-tenancy boundary it enforces, is the platform's and is
-// tested there against a real database. Nothing here proves anything about
-// isolation, and it should not be mistaken for doing so.
-
 export type MemoryStoreOptions = {
   /** Emails this store refuses to deactivate, standing in for a last owner. */
   undeactivatable?: string[];
@@ -53,8 +45,8 @@ export function createMemoryStore(
         (u) => u.email.toLowerCase() === email.toLowerCase() && u.externalRef !== externalRef
       );
       if (clash) {
-        // Adoption, not conflict: the same person already here under a
-        // password account is the normal case at a first federation.
+        // Adoption, not conflict: the same person under a password account is
+        // the normal case at a first federation.
         users.delete(clash.externalRef);
       }
       const existing = users.get(externalRef);

@@ -1,15 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { loginAs } from "./helpers/login";
 
-// The capability model, end to end.
-//
-// docs/architecture.md calls the registry "the actual extensibility point of
-// the platform", and the claim it makes is behavioural, not structural: a
-// feature appears because something supplies it and disappears when that
-// stops. Unit tests cover the resolution; these cover the part a customer
-// experiences — that nothing is switched on by hand, and that a failed
-// connection says which of the two credentials was wrong.
-
 test("an owner sees what's connected, what isn't, and what that costs them", async ({ page }) => {
   await loginAs(page, "buyer@acme.test", "zenosource-dev");
   await page.goto("/dashboard/integrations");
@@ -17,16 +8,10 @@ test("an owner sees what's connected, what isn't, and what that costs them", asy
   await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Epicor Kinetic" })).toBeVisible();
 
-  // Okta was declared before Phase 3 built it, precisely to show the registry
-  // isn't ERP-shaped. Now that it is built, it is no longer described as
-  // forthcoming.
   await expect(page.getByRole("heading", { name: "Okta" })).toBeVisible();
   await expect(page.getByText("Phase 3 builds it")).toHaveCount(0);
 
-  // The seed connects an identity provider (pointed at the scripted one this
-  // suite runs) and leaves the ERP unconnected, which makes this page show
-  // both halves of the capability model at once: what one connection supplies,
-  // and what the absent one costs.
+  // The seed connects an identity provider and leaves the ERP unconnected.
   await expect(page.getByText("Single sign-on (OIDC)")).toBeVisible();
   await expect(page.getByText("Directory provisioning (SCIM)")).toBeVisible();
   // Connecting an identity provider must not reach into procurement features.
@@ -38,13 +23,6 @@ test("the connect form asks for both credentials and marks every field", async (
   await loginAs(page, "buyer@acme.test", "zenosource-dev");
   await page.goto("/dashboard/integrations");
 
-  // Every control labelled — the Wave 1 rule, which matters most on a form
-  // filled in once from values read off two different Epicor screens.
-  //
-  // Unscoped and unambiguous: each connect form is dispatched on the
-  // integration's own type (src/app/dashboard/integrations/page.tsx), and no
-  // two of them share a label. If that ever stops being true these locators
-  // fail on strict mode, which is the right way to find out.
   await expect(page.getByLabel("Kinetic server URL")).toBeVisible();
   await expect(page.getByLabel("Company ID")).toBeVisible();
   await expect(page.getByLabel("API key")).toBeVisible();
@@ -65,16 +43,11 @@ test("a bad URL fails the field, and keeps everything else typed in", async ({ p
   // An ERP service account can't travel in cleartext.
   await expect(page.getByText(/Must be https/i)).toBeVisible();
 
-  // And the rest of the form survived — a failed submit costs a keystroke,
-  // not a re-entry.
   await expect(page.getByLabel("Company ID")).toHaveValue("EPIC06");
   await expect(page.getByLabel("Service account user name")).toHaveValue("svc-zenosource");
 });
 
 test("an unreachable server is reported as unreachable, not as bad credentials", async ({ page }) => {
-  // The distinction Phase 2 exists to get right: re-entering a password does
-  // nothing for a server that never answered, and sending an admin to do it
-  // costs a support cycle during onboarding.
   test.setTimeout(60_000);
   await loginAs(page, "buyer@acme.test", "zenosource-dev");
   await page.goto("/dashboard/integrations");
@@ -89,13 +62,10 @@ test("an unreachable server is reported as unreachable, not as bad credentials",
 
   const alert = page.getByRole("alert").first();
   await expect(alert).toContainText(/Nothing is wrong with the credentials/i, { timeout: 45_000 });
-  // Explicitly not the other message — that's the whole point of the check.
   await expect(alert).not.toContainText(/API Key Maintenance/i);
 });
 
 test("a member gets the page read-only, with no connect form at all", async ({ page }) => {
-  // Not a form that renders in full and refuses on submit — the pattern the
-  // audit kept finding, and Phase 1b Wave 5 removed everywhere else.
   await loginAs(page, "casey@acme.test", "zenosource-dev");
   await page.goto("/dashboard/integrations");
 

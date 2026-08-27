@@ -20,13 +20,8 @@ import type {
   DirectoryUser,
 } from "../types";
 
-// The directory service's router.
-//
-// It talks to one thing: the `DirectoryStore` the platform handed down, whose
-// every method is already bound to one tenant. There is no tenant id in this
-// file and no way to introduce one — docs/integrations.md calls a directory
-// credential reaching another tenant "a severe multi-tenancy breach", and the
-// defence against it is that no signature here accepts a tenant to get wrong.
+// No signature in this file accepts a tenant id: the store handed down is
+// already bound to one, and that is the whole defence against a cross-tenant write.
 
 function refused(result: unknown): result is DirectoryRefusal {
   return Boolean(result && typeof result === "object" && "refused" in (result as object));
@@ -95,9 +90,7 @@ async function handleUsers(
       if (!filter.ok) return error(400, filter.detail, "invalidFilter");
       const { startIndex, count } = parsePaging(request.query);
 
-      // The protocol pages from 1; the platform's port pages from 0, like
-      // every other query in that codebase. Translating here is the whole
-      // reason the port does not carry this convention.
+      // The protocol pages from 1; the platform's port pages from 0.
       const options: { skip: number; take: number; email?: string; externalRef?: string } = {
         skip: startIndex - 1,
         take: count,
@@ -125,11 +118,8 @@ async function handleUsers(
       const existing =
         (await store.findUser(externalRef)) ?? (await store.findUserByEmail(email));
       if (existing) {
-        // A directory retrying a create it already made, or — far more often
-        // at a first federation — a person who already had a password
-        // account here. Either way this is not a conflict to reject: the
-        // store adopts, and a 409 would stall the whole import on the users
-        // who were already doing the work.
+        // Not a conflict: a retried create, or a person who already had a
+        // password account here. A 409 would stall the whole import.
         const adopted = await store.createUser({ externalRef, email, name });
         if (refused(adopted)) return error(409, adopted.refused, "uniqueness");
         if (!active) {
@@ -162,10 +152,8 @@ async function handleUsers(
 
   if (method === "DELETE") {
     if (!user) return error(404, NOT_FOUND);
-    // Deactivate, never delete. Every purchase order this person issued, every
-    // action item they resolved and every status event they wrote points at
-    // their row; deleting it would either fail on a foreign key or erase the
-    // attribution the scorecards are built from.
+    // Deactivate, never delete: every order, action item and status event this
+    // person owns points at their row.
     const result = await store.setUserActive(id, false);
     if (refused(result)) return error(409, result.refused);
     return { status: 204, headers: {}, body: null };
@@ -191,10 +179,8 @@ async function handleUsers(
   if (method === "PATCH") {
     if (!user) return error(404, NOT_FOUND);
     const parsed = parseUserPatch(request.body);
-    // A patch shape we cannot read is a 400 and never a 200. A directory
-    // records a 200 as done and stops retrying, so a deactivation we silently
-    // failed to understand would leave someone who has left with their access
-    // and the directory's own console showing success.
+    // A patch shape we cannot read is a 400 and never a 200: a directory records
+    // a 200 as done and stops retrying the deactivation.
     if (!parsed.ok) return error(400, parsed.detail, "invalidValue");
 
     let current: DirectoryUser = user;
@@ -271,10 +257,8 @@ async function handleGroups(
 
   if (method === "DELETE") {
     if (!group) return error(404, NOT_FOUND);
-    // The group goes; the people do not. Removing a pushed group withdraws
-    // exactly the grants that group issued and leaves anything an owner
-    // granted by hand alone — see the platform's mapping rules for why that
-    // precedence exists.
+    // The group goes; the people do not. A grant an owner made by hand outranks
+    // a directory one and survives this.
     await store.deleteGroup(id);
     return { status: 204, headers: {}, body: null };
   }

@@ -6,13 +6,6 @@ import { ATTACKER_EMAIL, XSW_VARIANTS } from "../testing/xsw-variants";
 import type { OktaConfig } from "../config";
 import type { SignInCallback, SignInExpectations } from "../types";
 
-// The SAML half, attacked.
-//
-// Every negative below is a real signature over a real document — the fixture
-// signs with xml-crypto over genuine exclusive canonicalisation — so a test
-// that passes here proves a guard works rather than proving a mock was told
-// to return false.
-
 const ACS = "https://app.zenosource.test/api/sso/acme/callback";
 const SP_REF = "https://app.zenosource.test/sso/saml/acme";
 const IDP_ENTITY = "http://www.okta.test/exkZENOSOURCE";
@@ -59,8 +52,6 @@ describe("a valid sign-in", () => {
   });
 
   it("does not use the email as the stable subject", async () => {
-    // A directory can change someone's address. An account matched on a
-    // mutable value is an account somebody else can be handed.
     const result = await completeSignIn(configFor(), callbackFor(validResponse()), expectations);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -93,15 +84,11 @@ describe("a valid sign-in", () => {
 });
 
 describe("signature wrapping", () => {
-  // The single most important block in this package. Each mutation leaves a
-  // genuine signature in place and moves what a reader would read.
   for (const variant of XSW_VARIANTS) {
     it(`refuses ${variant.name}`, async () => {
       const mutated = variant.mutate(validResponse());
       const result = await completeSignIn(configFor(), callbackFor(mutated), expectations);
       expect(result.ok, `${variant.name} was accepted`).toBe(false);
-      // Belt and braces: even if some future refactor made one of these
-      // "succeed", it must never succeed *as the attacker*.
       if (result.ok) {
         expect((result as { identity: { email: string } }).identity.email).not.toBe(ATTACKER_EMAIL);
       }
@@ -124,9 +111,6 @@ describe("trust", () => {
   });
 
   it("accepts either certificate while a rollover is in progress", async () => {
-    // An identity provider publishes its next certificate beside its current
-    // one. Treating that as a conflict turns the most routine event in
-    // identity operations into an outage.
     const next = generateSelfSignedCertificate();
     const rolled = createFakeOkta({ certificate: next });
     const config = configFor({ certificates: [fake.certificateBody, next.certificateBody] });
@@ -156,9 +140,6 @@ describe("trust", () => {
 
 describe("bindings", () => {
   it("refuses an assertion minted for another tenant", async () => {
-    // Two customers can federate with the same identity provider. The
-    // per-tenant audience is what stops one of their assertions being
-    // replayed at the other.
     const xml = fake.signAssertion({
       inResponseTo: REQUEST_ID,
       destination: ACS,
@@ -204,10 +185,6 @@ describe("bindings", () => {
   });
 
   it("refuses an unsolicited assertion outright", async () => {
-    // Identity-provider-initiated sign-in is refused by design: without a
-    // request of ours to answer, the only replay window is the assertion's
-    // own validity period. The Okta tile is configured as a launch into
-    // /login/sso instead.
     const xml = fake
       .signAssertion({ inResponseTo: REQUEST_ID, destination: ACS, audience: SP_REF })
       .replace(/ InResponseTo="[^"]*"/g, "");
@@ -227,8 +204,6 @@ describe("bindings", () => {
     const result = await completeSignIn(configFor(), callbackFor(xml), expectations);
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    // A stale response must not mark a working connection broken — otherwise
-    // one person leaving a tab open withdraws sign-in for the whole tenant.
     expect(result.kind).toBe("REJECTED");
   });
 });

@@ -3,32 +3,12 @@ import { db as defaultDb } from "@/lib/db";
 import { recordDirectoryEvent } from "@/lib/directory/audit";
 import type { PrismaClient } from "@/generated/prisma/client";
 
-// Somebody leaving, and their work not leaving with them.
-//
-// "Nothing survives the second person" was a named hole in docs/todo.md: an
-// item owned by someone who left looks fine to everyone else, because every
-// count on the board is scoped to its owner. Phase 1b closed it for the case
-// where an owner clicks a button and names a successor. Phase 3 has to close
-// it for the case where a directory says so at 3am and there is nobody to ask
-// — which is the case that actually happens.
-//
-// Both go through here, so there is one implementation with two policies
-// rather than two implementations that drift. Takes `db` as a parameter for
-// the same reason runReminderJob and runSync do: it has to run identically
-// from a server action, from an inbound directory request, and from a test.
-
 export type HandOverResult = { moved: number };
 
 /**
- * Move every open item from one person to another.
- *
- * `moveLocations` is the whole difference between the two callers. When an
- * owner names a successor, the successor needs the departing user's location
- * assignments or they inherit items for orders they cannot open. When a
- * *directory* triggers this, copying locations would be a privilege grant
- * issued by an offboarding — so the work goes to an OWNER instead, who is
- * unrestricted by construction (locationScopeFor returns undefined for
- * OWNER, src/lib/access.ts) and can therefore resolve anything.
+ * `moveLocations` copies the departing user's location assignments to the successor.
+ * False for a directory-triggered handover, where it would be a privilege grant issued by
+ * an offboarding; the work goes to an OWNER, who is unrestricted by construction anyway.
  */
 export async function handOverOpenWork(params: {
   db?: PrismaClient;
@@ -53,8 +33,7 @@ export async function handOverOpenWork(params: {
         where: {
           internalUserId_locationId: { internalUserId: params.toUserId, locationId },
         },
-        // A grant that arrives with somebody's work is a hand-made one, and
-        // must not be revoked by the next directory push.
+        // MANUAL: a grant arriving with somebody's work must survive the next directory push.
         create: { internalUserId: params.toUserId, locationId, source: "MANUAL" },
         update: {},
       });
@@ -66,7 +45,6 @@ export async function handOverOpenWork(params: {
   return { moved: moved.count };
 }
 
-/** Who a directory-triggered handover goes to when nobody is there to choose. */
 export async function pickHandoverOwner(
   db: PrismaClient,
   tenantId: string,
@@ -80,8 +58,7 @@ export async function pickHandoverOwner(
       id: { not: excludeUserId },
     },
     select: { id: true, name: true },
-    // Oldest first, so the same person is chosen every time rather than
-    // whoever the planner happened to return.
+    // Oldest first, so the same owner is chosen every time.
     orderBy: { createdAt: "asc" },
   });
 }
@@ -91,14 +68,8 @@ export type DeactivationResult =
   | { ok: false; refused: string };
 
 /**
- * Step someone out of the team, wherever the instruction came from.
- *
- * Refuses the last active owner. That refusal is not politeness — an
- * organization with no owner cannot repair a broken integration, cannot issue
- * a directory token, and cannot promote anyone, so the directory would have
- * locked its own customer out of administering the product. It is recorded as
- * an OPERATION_REFUSED event because nothing else in the product would say it
- * happened.
+ * Refuses the last active owner: an organization with no owner cannot repair a broken
+ * integration, issue a directory token, or promote anyone.
  */
 export async function deactivateInternalUser(params: {
   db?: PrismaClient;
@@ -114,8 +85,7 @@ export async function deactivateInternalUser(params: {
   const user = await db.internalUser.findUnique({ where: { id: params.userId } });
   if (!user) return { ok: false, refused: "No such user." };
   if (user.status === "DEACTIVATED") {
-    // Idempotent: a directory retrying a deactivation it already made must
-    // not be told it failed, or it retries forever.
+    // Idempotent: a directory told a repeated deactivation failed retries forever.
     return { ok: true, moved: 0, successorName: null };
   }
 
@@ -157,10 +127,8 @@ export async function deactivateInternalUser(params: {
       moveLocations: params.moveLocations ?? params.source === "TEAM_PAGE",
     }));
   } else {
-    // No one to hand to. Still strip the location grants — a deactivated user
-    // holding a site's orders is the thing being prevented — and leave the
-    // items where they are rather than dropping them, so the refusal is
-    // visible on the board rather than silently emptying it.
+    // Nobody to hand to: strip the location grants but leave the items owned, so the
+    // refusal is visible on the board rather than silently emptying it.
     await db.internalUserLocation.deleteMany({ where: { internalUserId: user.id } });
     await recordDirectoryEvent({
       db,
@@ -179,8 +147,7 @@ export async function deactivateInternalUser(params: {
     data: {
       status: "DEACTIVATED",
       deactivatedAt: new Date(),
-      // Demoted as well as deactivated, so reactivating never silently
-      // restores administrative authority somebody removed on purpose.
+      // Demoted too, so reactivating never silently restores administrative authority.
       role: "MEMBER",
     },
   });
@@ -203,10 +170,8 @@ export async function deactivateInternalUser(params: {
 }
 
 /**
- * A directory can undo an offboarding, and does — somebody suspended by
- * mistake, or a contractor coming back. The role deliberately does not come
- * back with them: MEMBER is where deactivation left it, and an owner has to
- * say otherwise.
+ * The role does not come back with them: MEMBER is where deactivation left it, and an
+ * owner has to say otherwise.
  */
 export async function reactivateInternalUser(params: {
   db?: PrismaClient;

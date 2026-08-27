@@ -166,13 +166,9 @@ export type HealthReport = {
    * When the credential this connection depends on stops being valid — a
    * signing certificate's notAfter, for an integration that has one.
    *
-   * Optional, so an integration with no such thing still satisfies this type.
-   * And deliberately *not* a reason to report the connection unhealthy: an
-   * identity provider publishes its next certificate alongside its current one
-   * during a rollover, so divergence is the healthy state, and a certificate
-   * with twelve days left is not a broken connection. Rendered as a dated
-   * line on the integrations page instead. Turning it into an action item
-   * needs something running on a cadence, which is Phase 6's decision.
+   * Not a reason to report the connection unhealthy: an identity provider
+   * publishes its next certificate alongside its current one during a
+   * rollover, so divergence is the healthy state.
    */
   credentialExpiresAt?: TimestampString;
 };

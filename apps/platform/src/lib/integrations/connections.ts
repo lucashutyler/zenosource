@@ -11,20 +11,10 @@ import { openSecrets, sealSecrets } from "./secrets";
 import type { ConnectorSession, HealthReport } from "./contract";
 import type { IntegrationConnection } from "@/generated/prisma/client";
 
-// The per-tenant half of the capability model: who has connected what, and
-// whether it still works. The declarations are in registry.ts; nothing here
-// decides what an integration *can* do, only what this tenant currently gets.
-
 /**
- * Only CONNECTED grants capabilities. DEGRADED deliberately does not.
- *
- * The tempting alternative — keep features on while a connection is broken,
- * since the mirrored data is still sitting there — is worse in the way this
- * product cares about. A PO Suggestions screen fed by a sync that died on
- * Tuesday shows Tuesday's demand as though it were today's, and a buyer
- * raises orders against it. An absent feature with an explanation is a bad
- * afternoon; a confidently stale one is a wrong purchase order. The
- * INTEGRATION_RECONNECT action item is what makes the absence loud.
+ * Only CONNECTED grants capabilities. DEGRADED deliberately does not: a screen
+ * fed by a sync that died on Tuesday shows Tuesday's demand as today's, and a
+ * buyer raises orders against it.
  */
 const GRANTING_STATUS = "CONNECTED" as const;
 
@@ -36,14 +26,9 @@ export const getConnectionsForTenant = cache(async (tenantId: string) => {
 });
 
 /**
- * Every capability this tenant currently has, intersected with what the
- * connection actually verified. A capability is granted only when the
- * integration declares it *and* the last health check confirmed the instance
- * can serve it. A partial grant is the normal case at a real customer — an
- * ERP credential scoped to some of its services and not others connects
- * perfectly well and still cannot supply everything the integration declares
- * — and unlocking the feature anyway produces a screen that is empty forever
- * with no explanation.
+ * Granted only where the integration declares a capability *and* the last
+ * health check confirmed the instance can serve it. A partial grant is the
+ * normal case: an ERP credential scoped to some of its services and not others.
  */
 export const capabilitiesForTenant = cache(
   async (tenantId: string): Promise<Set<Capability>> => {
@@ -64,10 +49,8 @@ export const capabilitiesForTenant = cache(
 );
 
 /**
- * `null` means the connection never reported a capability list — an older row
- * or a connector that doesn't probe — in which case the declared set stands.
- * Absence of evidence isn't evidence of absence, and failing closed here
- * would silently disable features on upgrade.
+ * `null` means the connection never reported a list, in which case the declared
+ * set stands: failing closed here would disable features on upgrade.
  */
 function verifiedCapabilitiesOf(connection: IntegrationConnection): Set<Capability> | null {
   const config = connection.config as { verifiedCapabilities?: unknown } | null;
@@ -86,12 +69,9 @@ export async function isFeatureEnabled(tenantId: string, feature: FeatureId): Pr
 }
 
 /**
- * Route-level gate. A locked feature is `notFound()`, not a redirect and not
- * a 403: the route genuinely does not exist for this tenant, and Phase 1b
- * already built the designed "Nothing here." boundary that renders it. A
- * feature that is merely hidden in the nav but reachable by typing the URL is
- * the same class of bug as the locations list that was tenant-scoped but not
- * location-scoped.
+ * Route-level gate. A locked feature is `notFound()`, never a redirect or a
+ * 403: the route genuinely does not exist for this tenant, and hiding it from
+ * the nav alone leaves it reachable by typing the URL.
  */
 export async function requireFeature(tenantId: string, feature: FeatureId): Promise<void> {
   if (!(await isFeatureEnabled(tenantId, feature))) notFound();
@@ -99,15 +79,7 @@ export async function requireFeature(tenantId: string, feature: FeatureId): Prom
 
 /**
  * When the credential behind a connection stops being valid, if it said.
- *
- * Deliberately read off the stored config rather than being a column: it is
- * one nullable string that only some integrations have, and putting it in the
- * schema would make it look like something the product acts on. It isn't —
- * nothing branches on it, nothing is withdrawn because of it, and no action
- * item is minted from it. It renders as a dated line, and that is all, because
- * a certificate with twelve days left is not a broken connection and nothing
- * runs on a cadence to notice one with twelve hours left. See docs/todo.md for
- * what changes when there is a scheduler.
+ * Nothing branches on it: a certificate with twelve days left is not broken.
  */
 export function credentialExpiryOf(connection: IntegrationConnection): Date | null {
   const config = connection.config as { credentialExpiresAt?: unknown } | null;
@@ -161,10 +133,8 @@ export async function connect(params: {
 }
 
 /**
- * Keeps the config so reconnecting isn't a re-onboarding, wipes the secrets
- * so a disconnected integration stops being a credential at rest. Also
- * resolves any open reconnect item — a connection the tenant turned off on
- * purpose is not work anyone owes.
+ * Keeps the config so reconnecting is not a re-onboarding, and wipes the
+ * secrets so a disconnected integration stops being a credential at rest.
  */
 export async function disconnect(tenantId: string, integrationId: string) {
   const connection = await db.integrationConnection.update({
@@ -176,10 +146,8 @@ export async function disconnect(tenantId: string, integrationId: string) {
       healthDetail: null,
     },
   });
-  // Any directory credential this connection issued goes with it. The comment
-  // above says disconnecting exists so a disconnected integration stops being
-  // a credential at rest; a live token that can still deactivate users is
-  // exactly that, in the direction that matters most.
+  // A directory token left live after a disconnect is a credential at rest
+  // that can still deactivate users.
   await revokeAllForConnection(connection.id);
   await resolveOpenActionItemsFor("INTEGRATION_CONNECTION", connection.id, {
     actionType: "INTEGRATION_RECONNECT",
@@ -223,11 +191,8 @@ export async function recordHealth(connectionId: string, health: HealthReport) {
       lastHealthyAt: health.healthy ? now : existing.lastHealthyAt,
       healthFailure: health.failure,
       healthDetail: health.detail ?? null,
-      // Re-probing capabilities on every check matters: an admin narrowing an
-      // API key's Access Scope is a silent feature withdrawal otherwise.
-      // Spread, never replaced: everything else on this blob is the
-      // integration's own connect-form config, and a wholesale write here
-      // would erase it on the first health check after connecting.
+      // Spread, never replaced: the rest of this blob is the integration's own
+      // connect-form config, and a wholesale write would erase it.
       config: health.verifiedCapabilities
         ? {
             ...((existing.config as Record<string, unknown>) ?? {}),
@@ -242,16 +207,10 @@ export async function recordHealth(connectionId: string, health: HealthReport) {
 }
 
 /**
- * One open INTEGRATION_RECONNECT per broken connection, and none when it's
- * healthy. This is the function that keeps the product's central claim true
- * for integrations: docs/product.md's "a status nobody is being reminded to
- * act on is a modeling bug", applied to the connection itself.
- *
- * Owned by an OWNER, not a MEMBER: repairing an ERP credential means going
- * into Epicor's API Key Maintenance, which is an admin's job, and a MEMBER
- * who cannot fix it would just carry the item forever. If a tenant somehow
- * has no OWNER the item is skipped rather than orphaned — an action item with
- * no resolvable owner is itself the modeling bug.
+ * One open INTEGRATION_RECONNECT per broken connection, and none when it is
+ * healthy. Owned by an OWNER, because repairing a credential is an admin's job
+ * and a MEMBER who cannot fix it would carry the item forever; with no OWNER
+ * the item is skipped rather than left owned by nobody.
  */
 async function reconcileReconnectItem(connection: IntegrationConnection) {
   if (connection.status === "DEGRADED") {

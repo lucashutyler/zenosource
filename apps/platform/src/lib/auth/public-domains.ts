@@ -1,16 +1,9 @@
 import "server-only";
 
-// Addresses that cannot identify an organization.
-//
-// A tenant claiming `gmail.com` would route every consumer address in the
-// world at their identity provider, and the global unique constraint on
-// TenantDomain means the first tenant to claim one would hold it permanently.
-// So it is refused at the point of claiming rather than untangled later.
-//
-// Deliberately short. This is not an attempt at a complete list of free email
-// providers — that list is unmaintainable, and its long tail is people running
-// real companies on small providers. It is the handful common enough that an
-// admin might type one by accident.
+// A tenant claiming `gmail.com` would route every consumer address in the world
+// at their identity provider, and TenantDomain's global unique constraint means
+// the first claimant would hold it permanently. Only the handful an admin might
+// type by accident — a complete list of free providers is unmaintainable.
 
 const PUBLIC_DOMAINS = new Set([
   "aol.com",

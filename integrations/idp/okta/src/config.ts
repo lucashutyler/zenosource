@@ -1,18 +1,6 @@
 import { parseIdpMetadata, normalizeCertificate } from "./metadata";
 import type { ConnectorSession } from "./types";
 
-// What a buyer's IT admin types on the connect form, and how it's validated.
-//
-// Split the same way Epicor's is: `config` is non-secret and stored as JSON
-// the page can render back; `secrets` are sealed and never rendered. The split
-// is the integration's call — the platform stores whatever each side of this
-// returns without looking inside it.
-//
-// One connection per tenant carries one protocol. docs/integrations.md says
-// "the customer's Okta admin picks the protocol per app instance, not
-// ZenoSource", and an admin configures exactly one — so this is a choice made
-// once on this form, not a pair of connections.
-
 export type SsoProtocol = "OIDC" | "SAML";
 
 export type OktaConfig = {
@@ -21,29 +9,23 @@ export type OktaConfig = {
   // --- OIDC ---
   /**
    * The authorization server, e.g. `https://acme.okta.com/oauth2/default`.
-   * Compared byte-for-byte against the `iss` of every token: an issuer that
-   * merely resolves to the same host is a different issuer.
+   * Compared byte-for-byte against the `iss` of every token.
    */
   issuer?: string;
   clientId?: string;
 
   // --- SAML ---
-  /** The identity provider's own entity id, as it appears in its metadata. */
   idpEntityId?: string;
-  /** Where the browser is sent to start a sign-in. */
   ssoUrl?: string;
   /**
    * Signing certificates, base64 DER. Always a list: an identity provider
-   * publishes its next certificate beside its current one during a rollover,
-   * and a single-valued field turns that into an outage.
+   * publishes its next certificate beside its current one during a rollover.
    */
   certificates?: string[];
   /**
-   * Whether the identity provider signs the response element as well as the
-   * assertion. Okta signs the assertion by default and the response only when
-   * asked, and requiring a signature that isn't there rejects every valid
-   * sign-in — so this follows the customer's setting rather than assuming.
-   * The assertion signature is required unconditionally and is not a setting.
+   * Okta signs the assertion by default and the response only when asked, so
+   * this follows the customer's setting rather than assuming. The assertion
+   * signature is required unconditionally.
    */
   responseSigned?: boolean;
 };
@@ -69,20 +51,14 @@ function httpsUrl(value: string): URL | null {
   } catch {
     return null;
   }
-  // http://localhost is allowed so the whole sign-in loop can be exercised
-  // against the fake identity provider in dev and E2E, exactly as the dev
-  // mailbox covers the email loop without a provider. Nothing else is.
+  // http://localhost is allowed so the sign-in loop can be exercised against
+  // the fake identity provider in dev and E2E. Nothing else is.
   const local = parsed.protocol === "http:" && parsed.hostname === "localhost";
   if (parsed.protocol !== "https:" && !local) return null;
   return parsed;
 }
 
-/**
- * Errors are keyed by the form control's own `name`, the convention every
- * form in the product has used since Phase 1b Wave 1. An admin pasting a
- * certificate into the wrong box should be told which box, not that the
- * connection failed.
- */
+/** Errors are keyed by the form control's own `name`. */
 export function parseConfig(raw: Record<string, unknown>): ParseResult {
   const errors: Record<string, string> = {};
 
@@ -99,8 +75,6 @@ export function parseConfig(raw: Record<string, unknown>): ParseResult {
     } else if (!httpsUrl(issuerRaw)) {
       errors.issuer = "Must be an https:// URL.";
     } else if (issuerRaw.includes("/.well-known/")) {
-      // People paste the discovery URL, because that is the one their
-      // identity provider shows them. Say so rather than failing discovery.
       errors.issuer = "Drop the /.well-known/… part — just the issuer URL itself.";
     }
 
@@ -120,12 +94,6 @@ export function parseConfig(raw: Record<string, unknown>): ParseResult {
     };
   }
 
-  // --- SAML ---
-  //
-  // Two ways in, because enterprise admins genuinely use both: paste the
-  // metadata document, or type the two values and the certificate. The
-  // metadata path wins when both are filled, since it is the one the
-  // identity provider generated.
   const metadataXml = str(raw, "metadataXml");
   let entityId = str(raw, "idpEntityId");
   let ssoUrl = str(raw, "ssoUrl");
@@ -173,7 +141,6 @@ export function parseConfig(raw: Record<string, unknown>): ParseResult {
   return { ok: true, config, secrets: {} };
 }
 
-/** Narrows the opaque session the platform hands back. */
 export function readSession(session: ConnectorSession): {
   config: OktaConfig;
   secrets: OktaSecrets;

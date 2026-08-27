@@ -132,10 +132,9 @@ async function main() {
   await db.capturedEmail.deleteMany();
   await db.statusEvent.deleteMany();
   await db.actionItem.deleteMany();
-  // Phase 3's directory tables. Ordered so every foreign key target is
-  // deleted later: group members and group-location grants reference
-  // InternalUser and Location (both further down), and InternalUserLocation's
-  // grantedByGroupId is ON DELETE SET NULL, so groups can go before it.
+  // Ordered so every foreign key target is deleted later: group members and
+  // group-location grants reference InternalUser and Location further down,
+  // and InternalUserLocation.grantedByGroupId is ON DELETE SET NULL.
   await db.directoryEvent.deleteMany();
   await db.directoryGroupMember.deleteMany();
   await db.directoryGroupLocation.deleteMany();
@@ -1129,16 +1128,11 @@ async function main() {
 
   // --- Single sign-on and directory provisioning, locally, with no Okta org --
   //
-  // The same shape as the dev mailbox: the whole loop works without the thing
-  // it would normally need. `npm run fake-idp` starts a scripted identity
-  // provider on port 3101 — outside this app, in its own process, so there is
-  // no flag anyone can forget that would expose a credential-minting endpoint
-  // in production — and this connection points at it.
-  //
-  // Skipped without a sealing key, and it says why. The alternative would be
-  // storing a client secret in plaintext in the one row this codebase is most
-  // careful about, which is a worse thing to teach by example than a missing
-  // demo.
+  // `npm run fake-idp` starts a scripted identity provider on port 3101, in
+  // its own process, so no flag anyone can forget could expose a
+  // credential-minting endpoint in production — and this connection points at
+  // it. Skipped without a sealing key rather than storing a client secret
+  // unsealed.
   await db.tenantDomain.create({
     data: { tenantId: tenant.id, domain: "acme.test", verifiedAt: NOW },
   });
@@ -1166,9 +1160,8 @@ async function main() {
       },
     });
 
-    // Generated fresh every seed and never committed. A checked-in credential
-    // that grants tenant-wide directory write is precisely what the guard at
-    // the top of e2e/global-setup.ts exists to prevent one class of.
+    // Generated fresh every seed: a checked-in one would be a committed
+    // credential granting tenant-wide directory write.
     const directoryToken = `zs_dir_${cryptoRandomBytes(32).toString("base64url")}`;
     await db.directoryToken.create({
       data: {

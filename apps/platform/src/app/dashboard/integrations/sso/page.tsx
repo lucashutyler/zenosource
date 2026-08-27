@@ -18,14 +18,9 @@ import { AddDomainForm, GroupMappingForm, IssueTokenForm } from "./forms";
 
 export const metadata: Metadata = { title: "Single sign-on" };
 
-// Deliberately NOT behind requireFeature().
-//
-// The three identity features in capabilities.ts gate the "What's switched on"
-// list and nothing else, and this page is the reason that matters. A DEGRADED
-// connection withdraws those capabilities — so gating this screen on them
-// would hide the repair tool behind the health of the thing being repaired,
-// which is the failure the whole Phase 3 design is arranged to avoid. OWNER is
-// the gate here, same as the parent page.
+// Not behind requireFeature(): a DEGRADED connection withdraws the identity
+// capabilities, which would hide this repair screen behind the health of the
+// thing it repairs. OWNER is the gate.
 
 function Address({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -37,7 +32,6 @@ function Address({ label, value, hint }: { label: string; value: string; hint?: 
   );
 }
 
-/** Same shape as the integrations page's formDataFor: one bound field. */
 function fieldsFor(name: string, value: string): FormData {
   const formData = new FormData();
   formData.set(name, value);

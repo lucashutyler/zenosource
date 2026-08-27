@@ -4,10 +4,6 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { directoryStoreFor } from "./store";
 import { wipeTestDb } from "@/lib/testing/wipe-test-db";
 
-// The store is where a directory's instruction meets this product's rules.
-// isolation.test.ts covers the tenant boundary; this covers the judgement
-// calls — the places where the right answer is not "do what you were told".
-
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const db = new PrismaClient({ adapter });
 
@@ -43,9 +39,6 @@ async function scenario() {
 
 describe("provisioning", () => {
   it("adopts an address that already has a password account", async () => {
-    // The ordinary case at a first federation: somebody who has been using the
-    // product for weeks before their IT department connects it. A conflict
-    // here would stall the whole import on exactly the people doing the work.
     const { tenant, store } = await scenario();
     const existing = await db.internalUser.create({
       data: {
@@ -65,7 +58,6 @@ describe("provisioning", () => {
     expect(created).toEqual(expect.objectContaining({ email: "casey@acme.test" }));
 
     const after = await db.internalUser.findUniqueOrThrow({ where: { id: existing.id } });
-    // Same row — every purchase order they issued points at it.
     expect(await db.internalUser.count({ where: { tenantId: tenant.id } })).toBe(2);
     expect(after.externalRef).toBe("00uCASEY");
     expect(after.role).toBe("OWNER");
@@ -85,8 +77,7 @@ describe("provisioning", () => {
   });
 
   it("refuses a second directory record claiming one address", async () => {
-    // Whichever way this was guessed, one real person would end up signing in
-    // as another.
+    // Relaxing this would let one real person sign in as another.
     const { store } = await scenario();
     await store.createUser({ externalRef: "00uONE", email: "shared@acme.test", name: "One" });
     const second = await store.createUser({
@@ -98,9 +89,8 @@ describe("provisioning", () => {
   });
 
   it("never lists people the directory did not create", async () => {
-    // A hand-made password account is not the directory's to enumerate, and
-    // returning it invites a reconciliation that deactivates everyone it does
-    // not recognise.
+    // A hand-made password account is not the directory's to enumerate: returning it
+    // invites a reconciliation that deactivates everyone it does not recognise.
     const { store } = await scenario();
     await store.createUser({ externalRef: "00uNEW", email: "new@acme.test", name: "New" });
     const listed = await store.listUsers({ skip: 0, take: 100 });
@@ -119,8 +109,6 @@ describe("provisioning", () => {
     expect(result).toEqual({ refused: expect.stringMatching(/already has that address/i) });
 
     const untouched = await db.internalUser.findFirstOrThrow({ where: { externalRef: "00uA" } });
-    // Not a partial apply: the name did not change either, or the directory
-    // would be told the whole operation failed while half of it landed.
     expect(untouched.email).toBe("a@acme.test");
     expect(untouched.name).toBe("A");
   });
@@ -129,7 +117,6 @@ describe("provisioning", () => {
 describe("deactivation through the directory", () => {
   it("refuses the last active owner and says why", async () => {
     const { tenant, store } = await scenario();
-    // Make the owner a directory-managed user so the store can reach them.
     await db.internalUser.updateMany({
       where: { tenantId: tenant.id, role: "OWNER" },
       data: { sourceIntegrationId: "okta", externalRef: "00uOWNER" },
@@ -144,8 +131,7 @@ describe("deactivation through the directory", () => {
   });
 
   it("deactivates rather than deletes, and reports it as inactive afterwards", async () => {
-    // A directory reads the resource back to confirm the change took. Getting
-    // that wrong is worse than refusing the write.
+    // A directory reads the resource back to confirm the change took.
     const { store } = await scenario();
     await store.createUser({ externalRef: "00uNEW", email: "new@acme.test", name: "New" });
 

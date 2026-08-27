@@ -49,11 +49,6 @@ async function tenantWithOwner(name = "Test Co") {
 
 describe("runReminderJob", () => {
   it("does not chase somebody who has left", async () => {
-    // The mirror of the inactive-supplier-contact skip below it. A reminder
-    // addressed to a departed employee is how a chase silently stops working
-    // while the board keeps looking fine to everyone still here — and after
-    // Phase 3 a directory can deactivate somebody at any hour without anyone
-    // on this side noticing.
     const { tenant, owner } = await tenantWithOwner("Departed Co");
     await db.actionItem.create({
       data: {
@@ -77,9 +72,8 @@ describe("runReminderJob", () => {
     });
 
     expect(result.internalEmailsSent).toBe(0);
-    // And it is not resolved or reassigned either: a chase click must not
-    // silently rewrite the board. Handing the work over is deactivation's
-    // job (src/lib/offboarding.ts), which is where it can be seen happening.
+    // Not resolved or reassigned either: handing the work over is
+    // deactivation's job (src/lib/offboarding.ts).
     const item = await db.actionItem.findFirst({ where: { subjectId: "po-departed" } });
     expect(item?.status).toBe("OPEN");
     expect(item?.internalOwnerId).toBe(owner.id);

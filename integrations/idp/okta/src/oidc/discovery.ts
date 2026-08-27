@@ -1,14 +1,5 @@
 import type { FetchLike } from "../types";
 
-// Discovery, run once at connect time and again on every health check.
-//
-// The document is fetched through the injected transport like every other
-// outbound call in this package, so no test ever needs a network. What comes
-// back is checked rather than trusted: an identity provider that answers with
-// a different `issuer` than the one an admin typed is either misconfigured or
-// not the identity provider they think it is, and either way the tokens it
-// mints must not be accepted against this connection.
-
 export type OidcMetadata = {
   issuer: string;
   authorizationEndpoint: string;
@@ -76,9 +67,8 @@ export async function discover(
     typeof document[key] === "string" ? (document[key] as string) : "";
 
   const declared = read("issuer");
-  // Byte-for-byte. A trailing slash difference is a different issuer as far
-  // as token validation is concerned, so accepting it here would produce a
-  // connection that passes its health check and rejects every real sign-in.
+  // Byte-for-byte: a trailing-slash difference is a different issuer to token
+  // validation, so accepting it here passes the health check and breaks every sign-in.
   if (declared !== issuer.replace(/\/+$/, "")) {
     return {
       ok: false,
@@ -101,8 +91,8 @@ export async function discover(
     if (!secure(value)) {
       return { ok: false, kind: "MISCONFIGURED", detail: `Its ${name} is not https://.` };
     }
-    // An endpoint on another origin than the issuer means a token request, or
-    // a key fetch, would leave for somewhere the admin never named.
+    // A cross-origin endpoint sends a token request or a key fetch somewhere the
+    // admin never named.
     if (!sameOrigin(value, issuer)) {
       return {
         ok: false,

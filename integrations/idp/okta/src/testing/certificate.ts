@@ -1,18 +1,5 @@
 import { createSign, generateKeyPairSync, type KeyObject } from "node:crypto";
 
-// A self-signed certificate, minted in memory at import time.
-//
-// Tests need a real X.509 certificate — the SAML path reads a public key out
-// of one, checks its validity window, and matches an embedded certificate
-// against a stored one — and node:crypto can generate a key pair but not wrap
-// one in a certificate. The two obvious ways out are both worse than this
-// file: committing a private key to a public MIT repository, or shelling out
-// to openssl and making a binary on PATH a test dependency.
-//
-// So the certificate is assembled here. It is about eighty lines of DER,
-// which is a small price for a fixture that is different on every run and
-// exists nowhere on disk.
-
 function len(bytes: number): Buffer {
   if (bytes < 0x80) return Buffer.from([bytes]);
   const encoded: number[] = [];
@@ -90,10 +77,7 @@ export type GeneratedCertificate = {
   notAfter: Date;
 };
 
-/**
- * @param lifetimeDays negative for a certificate that has already expired,
- * which is how the health check's expired-certificate branch gets tested.
- */
+/** @param lifetimeDays negative for a certificate that has already expired. */
 export function generateSelfSignedCertificate(options?: {
   commonName?: string;
   lifetimeDays?: number;

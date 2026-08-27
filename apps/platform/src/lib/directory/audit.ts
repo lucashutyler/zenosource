@@ -3,20 +3,6 @@ import { db as defaultDb } from "@/lib/db";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { DirectoryEventKind } from "@/generated/prisma/enums";
 
-// Every directory operation goes through here, applied and refused alike.
-//
-// Same discipline as src/lib/status-events.ts: one writer, so the record
-// cannot drift from the thing it records. The refusals are the reason this
-// exists — a last-owner deactivation we correctly declined writes no status
-// anywhere else in the product, and it is exactly what Phase 5's "security
-// review of multi-tenant auth boundaries ... SCIM token scoping in
-// particular" reads.
-//
-// `detail` carries canonical fields written by callers here, never a request
-// body handed over by an integration. The boundary rule
-// (docs/integrations.md: don't leak vendor-specific shapes into core platform
-// code) does not get an exception for an audit table.
-
 export type DirectoryEventInput = {
   tenantId: string;
   connectionId?: string | null;

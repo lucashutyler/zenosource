@@ -1,18 +1,9 @@
 import { createServer } from "node:http";
 import { createFakeOkta } from "@zenosource/okta/testing";
 
-// A scripted identity provider for local development.
-//
-// The auth equivalent of the dev mailbox at /dashboard/emails: the whole
-// sign-in loop works without the thing it would normally need, so a developer
-// can exercise federation without an Okta org and a demo doesn't depend on
-// somebody's tenant still existing.
-//
-// Deliberately a separate process rather than a route inside apps/platform.
-// A route in the shipped app that mints signed assertions is a total
-// authentication bypass sitting behind an environment check, and environment
-// checks get forgotten exactly once. Nothing under apps/platform/src imports
-// this file or the package entry it uses.
+// A separate process rather than a route: an endpoint in the shipped app that
+// mints signed assertions is an authentication bypass behind an environment
+// check, and nothing under apps/platform/src may import this.
 
 const port = Number(process.env.FAKE_IDP_PORT ?? 3101);
 const fake = createFakeOkta({ issuer: `http://localhost:${port}` });

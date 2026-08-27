@@ -4,15 +4,8 @@ import { resolveTenantBySlug } from "@/lib/auth/tenant-resolution";
 import { SSO_COOKIE } from "@/lib/auth/sso-request";
 import { safeReturnTo } from "@/lib/auth/return-to";
 
-// Where a federated sign-in begins.
-//
-// The tenant comes from the path segment and nothing else, which is the
-// ordering docs/integrations.md requires — resolve the tenant, *then* validate
-// anything. At this end there is nothing to validate yet; the point is that by
-// the time there is, the answer was already fixed by the URL a person visited.
-//
-// Node runtime: the SAML path underneath reaches for the XML stack, which is
-// CommonJS and is listed in next.config.ts's serverExternalPackages.
+// The SAML path underneath reaches for the XML stack, which is CommonJS and is
+// listed in next.config.ts's serverExternalPackages.
 export const runtime = "nodejs";
 
 export async function GET(
@@ -30,10 +23,8 @@ export async function GET(
     return NextResponse.redirect(new URL("/login?sso=unavailable", request.nextUrl));
   }
 
-  // `hint` is only ever the address somebody typed on the sign-in page, and it
-  // is handed to the identity provider as a courtesy so they are not asked who
-  // they are twice. Nothing downstream trusts it: whoever comes back is
-  // whoever their identity provider says came back.
+  // Nothing downstream trusts this: whoever comes back is whoever their
+  // identity provider says came back.
   const hint = request.nextUrl.searchParams.get("hint");
   const started = await beginSignIn({
     tenant,
@@ -49,14 +40,10 @@ export async function GET(
   response.cookies.set(SSO_COOKIE, started.cookieValue, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    // Not `lax`. A SAML response arrives as a cross-site form POST, and a Lax
-    // cookie is not sent on one — so the binding this cookie exists to provide
-    // would be missing on exactly the protocol that most needs it. `none`
-    // requires `secure`, which is not available on the plain-HTTP dev and E2E
-    // servers, so it is set only where it can be honoured. The server-side
-    // single-use row is the guarantee either way; this is the second factor.
+    // Not `lax`: a SAML response arrives as a cross-site form POST, which a Lax
+    // cookie is not sent on. `none` requires `secure`, so dev and E2E, which
+    // serve plain HTTP, fall back to the server-side single-use row alone.
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    // Narrow enough that it is never sent to a page, only back to the callback.
     path: "/api/sso",
     maxAge: 600,
   });

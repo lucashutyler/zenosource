@@ -1,12 +1,3 @@
-// Turning a directory's user and group payloads into canonical fields.
-//
-// Everything below is defensive in one direction only: a shape we do not
-// understand is an error, never a silently-ignored field. A directory that
-// sends `active: false` in a shape this file skips would be told the
-// deactivation succeeded, and an offboarded employee would keep their access
-// with the directory's own console showing green. That is the single worst
-// failure available in this file, so unparsed input fails loudly.
-
 export type ParsedUser = {
   externalRef: string | null;
   email: string;
@@ -34,9 +25,8 @@ export function readEmail(body: Record<string, unknown>): string {
   const work = entries.find((e) => text(e.type).toLowerCase() === "work");
   const first = entries[0];
   const chosen = text(primary?.value) || text(work?.value) || text(first?.value);
-  // userName is the fallback rather than the first choice: a directory may
-  // carry a login name that is not an address, and an address is what this
-  // product sends chase email to.
+  // userName is the fallback, not the first choice: it may be a login name
+  // rather than an address.
   return (chosen || text(body.userName)).toLowerCase();
 }
 
@@ -65,8 +55,8 @@ export function parseUser(body: unknown): ParseOutcome<ParsedUser> {
   if (typeof activeRaw === "boolean") {
     active = activeRaw;
   } else if (typeof activeRaw === "string") {
-    // Some clients send the string. Accept the two spellings that mean
-    // something and refuse anything else rather than guessing.
+    // Refused rather than defaulted: a missed `active: false` leaves a departed
+    // employee with their access.
     const lowered = activeRaw.trim().toLowerCase();
     if (lowered === "true") active = true;
     else if (lowered === "false") active = false;

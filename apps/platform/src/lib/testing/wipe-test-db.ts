@@ -11,10 +11,9 @@ export async function wipeTestDb(db: PrismaClient) {
   await db.capturedEmail.deleteMany();
   await db.statusEvent.deleteMany();
   await db.actionItem.deleteMany();
-  // Phase 3's directory tables. Ordered so every foreign key target is
-  // deleted later: group members and group-location grants reference
-  // InternalUser and Location (both further down), and InternalUserLocation's
-  // grantedByGroupId is ON DELETE SET NULL, so groups can go before it.
+  // Ordered so every foreign key target is deleted later: group members and
+  // group-location grants reference InternalUser and Location further down,
+  // and InternalUserLocation.grantedByGroupId is ON DELETE SET NULL.
   await db.directoryEvent.deleteMany();
   await db.directoryGroupMember.deleteMany();
   await db.directoryGroupLocation.deleteMany();

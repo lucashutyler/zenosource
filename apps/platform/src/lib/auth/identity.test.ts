@@ -51,8 +51,6 @@ describe("turning a verified identity into somebody on the team", () => {
   });
 
   it("adopts an existing password account, keeping its role and its history", async () => {
-    // The ordinary case at a first federation: people have been using the
-    // product for weeks before their IT department connects it.
     const { tenant, connection } = await scenario();
     const existing = await db.internalUser.create({
       data: {
@@ -75,9 +73,8 @@ describe("turning a verified identity into somebody on the team", () => {
     const after = await db.internalUser.findUniqueOrThrow({ where: { id: existing.id } });
     expect(after.role).toBe("OWNER");
     expect(after.externalRef).toBe("00uJORDAN");
-    // The password goes: leaving it would keep a second, unmanaged way into an
-    // account the directory now controls, so disabling somebody at the
-    // identity provider would not actually disable them.
+    // The password goes: a second, unmanaged way in would mean disabling
+    // somebody at the identity provider does not actually disable them.
     expect(after.passwordHash).toBeNull();
 
     const events = await db.directoryEvent.findMany({ where: { tenantId: tenant.id } });
@@ -85,8 +82,8 @@ describe("turning a verified identity into somebody on the team", () => {
   });
 
   it("matches on the directory's stable key, never on the address", async () => {
-    // A directory can change somebody's email. Matching on it would mean
-    // renaming one account hands you another.
+    // A directory can change an email, so matching on it would mean renaming
+    // one account hands you another.
     const { tenant, connection } = await scenario();
     const first = await resolve(tenant.id, connection.id, {
       subject: "00uCASEY",
@@ -127,8 +124,6 @@ describe("turning a verified identity into somebody on the team", () => {
   });
 
   it("never reaches into another organization, even for the same subject", async () => {
-    // The single worst thing that could go wrong on this path: one customer's
-    // identity provider minting a session for another customer's user.
     const a = await scenario("identity-a");
     const b = await scenario("identity-b");
 
@@ -160,13 +155,12 @@ describe("turning a verified identity into somebody on the team", () => {
     });
     if (!mine.ok) throw new Error("setup failed");
 
-    // Their directory renamed me to an address somebody else already has.
     const renamed = await resolve(tenant.id, connection.id, {
       subject: "00uME",
       email: "taken@acme.test",
     });
-    // Signing in still works — refusing would lock me out over somebody else's
-    // rename — but the stale address is left alone and the clash is recorded.
+    // Sign-in still succeeds: refusing would lock somebody out over another
+    // person's rename. The stale address is left alone and the clash recorded.
     expect(renamed.ok).toBe(true);
     const after = await db.internalUser.findUniqueOrThrow({ where: { id: mine.userId } });
     expect(after.email).toBe("me@acme.test");

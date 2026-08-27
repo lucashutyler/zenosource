@@ -11,15 +11,6 @@ import {
 } from "@/components/forms";
 import { valueFor } from "@/lib/form-state";
 
-/**
- * The identity-provider connect form.
- *
- * The protocol choice comes first because it is the customer's, not ours —
- * their own admin picked one when they created the application at their end,
- * and everything below it depends on which. Same Wave 1 rules as the ERP form:
- * every field labelled, every error under its control, a failure costing a
- * keystroke rather than a re-entry.
- */
 export function OktaConnectForm({ integrationId }: { integrationId: string }) {
   const [state, formAction] = useActionState<FormActionState, FormData>(
     connectIntegration,

@@ -1,11 +1,5 @@
-// Filter parsing, deliberately tiny.
-//
-// A directory sends exactly two shapes — `userName eq "someone@acme.test"`
-// and `externalId eq "00u..."` — plus `displayName eq "..."` for groups.
-// Implementing the rest of the filter grammar would be a parser to get wrong
-// for nobody's benefit, and a filter we half-understand is worse than one we
-// refuse: silently ignoring a clause returns every user in the tenant to a
-// query that asked for one.
+// An unsupported filter is refused, never ignored: silently dropping a clause
+// would answer a query that asked for one user with the whole tenant.
 
 export type ParsedFilter =
   | { ok: true; attribute: string; value: string }

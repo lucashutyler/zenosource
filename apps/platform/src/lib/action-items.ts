@@ -12,23 +12,13 @@ function generateAccessToken() {
   return randomBytes(32).toString("hex");
 }
 
-// A short, speakable code for the same grant — `7QK2-M4RD`.
-//
-// The 64-hex token stays in the href and is the only thing that authorizes
-// anything. This is what a human reads: it goes in the email body and on the
-// action view so a supplier can find the right message on the phone, or read
-// it to a colleague. The audit found the raw token rendered visibly, which
-// looks like malware, cannot be read aloud, and was single-handedly
-// responsible for the external email view overflowing a phone by 83%.
-//
+// The 64-hex token is what authorizes; this is only what a human reads aloud.
 // Crockford's alphabet minus the characters that get misheard or mistyped
-// (I/L/O/U, and 0/1 with them), so "seven-Q-K-two" survives a bad line.
+// (I/L/O/U, and 0/1 with them).
 const CLAIM_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 export function claimCodeFor(accessToken: string): string {
-  // Derived, not stored: same token always yields the same code, and a code
-  // alone can't be reversed into a token because it's a lossy projection of
-  // one — 8 characters of a 64-hex secret.
+  // Derived, not stored, and lossy: a code cannot be reversed into its token.
   let code = "";
   for (let i = 0; i < 8; i++) {
     const byte = parseInt(accessToken.slice(i * 2, i * 2 + 2), 16) || 0;
@@ -37,9 +27,8 @@ export function claimCodeFor(accessToken: string): string {
   return `${code.slice(0, 4)}-${code.slice(4)}`;
 }
 
-// Every state-bearing entity resolves to at most one open ActionItem — see
-// docs/architecture.md#action-items--reminders. Callers should only ever
-// create one through a state transition, never freestanding.
+// Every state-bearing entity resolves to at most one open ActionItem, and one
+// is only ever created through a state transition, never freestanding.
 export async function createActionItem(
   params: {
     tenantId: string;
@@ -74,13 +63,9 @@ export async function resolveActionItem(id: string) {
   });
 }
 
-// Atomic "resolve if still open" — the guard against double-actioning. An
-// action item can be visible to more than one team member (an OWNER can see
-// everything; a specific item is only *assigned* to one owner, but that's
-// not the same as only one person having access to it), and a supplier's
-// no-login link can be opened twice. Whoever's write actually flips
-// status OPEN -> RESOLVED wins; everyone else gets count 0 and must treat
-// the action as already handled, not retry the underlying mutation.
+// Atomic "resolve if still open": more than one person can see an item and a
+// supplier's no-login link can be opened twice. A `false` return means somebody
+// else already handled it, and the underlying mutation must not be retried.
 export async function tryResolveActionItem(
   id: string,
   resolvedBy?: { internalUserId?: string; contactId?: string }
@@ -97,12 +82,8 @@ export async function tryResolveActionItem(
   return result.count > 0;
 }
 
-// Resolves every OPEN action item for one or more subjects of the same type
-// at once — for state transitions (e.g. cancellation, RFQ close/award) that
-// make any pending action on those subjects moot, regardless of who owned
-// it. Accepts an array so a PO cancellation can resolve both the PO's own
-// items and every one of its lines' in one call, rather than needing a
-// separate call per line id.
+// For a state transition that makes every pending action on these subjects
+// moot, whoever owned them.
 export async function resolveOpenActionItemsFor(
   subjectType: ActionItemSubjectType,
   subjectId: string | string[],
@@ -148,11 +129,7 @@ export function listOpenActionItemsForInternalUser(internalUserId: string) {
   });
 }
 
-/**
- * Every open item the supplier side owes this tenant. The "they owe 11" half
- * of the dashboard — a view that did not exist anywhere in the product, and
- * is the answer to the question the product exists to answer.
- */
+/** Every open item the supplier side owes this tenant. */
 export function listOpenExternalActionItems(tenantId: string) {
   return db.actionItem.findMany({
     where: { tenantId, status: "OPEN", ownerType: "EXTERNAL_USER" },
@@ -161,11 +138,8 @@ export function listOpenExternalActionItems(tenantId: string) {
   });
 }
 
-// What to show for an action item and where clicking it should take you.
-// `subjectId` isn't a real FK (ActionItem is deliberately polymorphic — see
-// docs/data-model.md#actionitem), so resolving "which work item is this"
-// takes an extra lookup per subject type; all batched here rather than
-// N+1'd per item.
+// `subjectId` is not a real FK — ActionItem is polymorphic — so each subject
+// type needs its own lookup, batched here rather than run per item.
 export type ActionItemContext = {
   href: string | null;
   entityLabel: string;
@@ -298,12 +272,6 @@ export async function resolveActionItemContext(
         break;
 
       case "INTEGRATION_CONNECTION":
-        // These two used to fall through to a `default:` that labelled every
-        // non-document subject "PO suggestion" with no link. It was invisible
-        // while nothing had ever been DEGRADED, and Phase 3 makes it bite: the
-        // one item an owner most needs a single click to reach is a broken
-        // sign-in connection, and an unlabelled row that goes nowhere is not
-        // the "open action owned by someone" docs/architecture.md means.
         context.set(item.id, {
           href: "/dashboard/integrations",
           entityLabel: "Integration",
@@ -320,20 +288,10 @@ export async function resolveActionItemContext(
 }
 
 /**
- * The ordering rule for anything that shows a queue: dwell weighted by what's
- * at stake.
- *
- * Straight dwell descending is the obvious implementation and is wrong in the
- * one case that matters — it puts a 40-day-old $200 order above a 4-day-old
- * $80,000 one, and no buyer alive works that queue in that order. Value alone
- * is equally wrong: it never surfaces the small thing that has been rotting
- * for six weeks.
- *
- * Log-scaling the value keeps dwell as the primary axis (a week of waiting
- * outranks a 10x price difference) while letting an order two orders of
- * magnitude larger jump the queue. Deliberately not exposed as a sort option:
- * there is one right order for a chase product and it isn't the user's to
- * choose.
+ * Dwell weighted by what is at stake, for every queue in the product. Straight
+ * dwell descending puts a 40-day-old $200 order above a 4-day-old $80,000 one;
+ * log-scaling the value keeps dwell primary while letting size jump the queue.
+ * Deliberately not exposed as a sort option.
  */
 export function chaseRank(item: { openedAt: Date }, value: number | null, now = new Date()): number {
   const days = Math.max(0, (now.getTime() - item.openedAt.getTime()) / 86_400_000);
@@ -341,9 +299,8 @@ export function chaseRank(item: { openedAt: Date }, value: number | null, now = 
   return days * stake;
 }
 
-// The scoped, no-login "action view" link — see docs/architecture.md
-// #action-items--reminders. Valid as long as the item stays OPEN; not
-// single-use, not separately time-limited.
+// The scoped, no-login "action view" link: valid as long as the item stays
+// OPEN, not single-use and not separately time-limited.
 export function findOpenActionItemByToken(accessToken: string) {
   return db.actionItem.findFirst({
     where: { accessToken, status: "OPEN" },

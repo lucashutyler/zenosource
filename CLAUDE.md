@@ -31,6 +31,21 @@ ZenoSource is built to be extensible: each integration declares the *capabilitie
 - **ERP**: Epicor (Kinetic) — [docs/integrations.md#epicor-erp](docs/integrations.md#epicor-erp)
 - **IdP**: Okta (OIDC, SAML, SCIM 2.0) — [docs/integrations.md#okta-idp](docs/integrations.md#okta-idp)
 
+## Comments
+
+Minimal. Names carry the scope: a function, a variable, a test should say what it is without help, and a
+test name should state the assertion it makes. Documents carry the program — `docs/` for the system, a
+subproject's `CLAUDE.md` and `README.md` for that subproject, this file for what's true platform-wide.
+
+A comment earns its place only when it records something no name can:
+
+- **A decision whose opposite looks correct**, so nobody "fixes" it back into a regression.
+- **A constraint from outside** — a vendor's behaviour, a specification's requirement, a framework's rule.
+
+Everything else goes. Don't restate the line below, don't narrate how the code came to be written, and
+don't leave the reasoning from a review or a bug hunt in the source. That belongs in the commit message,
+or in `docs/todo.md` if it should outlive the commit.
+
 ## Repo structure (subprojects)
 
 | Path | Purpose |

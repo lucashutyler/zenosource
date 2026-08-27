@@ -50,10 +50,8 @@ describe("the Epicor connector conforms to the platform's contract", () => {
 
 describe("the Okta connector conforms to the platform's contract", () => {
   it("satisfies IdpConnector structurally", () => {
-    // Same assertion as Epicor's above, against the other contract. An
-    // identity provider and an ERP have almost nothing in common, which is
-    // why there are two contracts and two of these — a union would make this
-    // line compile while checking nothing.
+    // Two contracts rather than one union: a union would make this line
+    // compile while checking nothing.
     const connector: IdpConnector = oktaConnector;
     expect(connector.integrationId).toBe("okta");
   });
