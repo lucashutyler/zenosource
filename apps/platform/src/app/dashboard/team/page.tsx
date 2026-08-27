@@ -9,13 +9,21 @@ import { ChangeOwnPasswordForm } from "./change-password-form";
 
 export const metadata: Metadata = { title: "Team" };
 
+/**
+ * Team management, which did not exist at all.
+ *
+ * A buyer organization could not onboard its second procurement person: no
+ * invite, no create, no role change, no deactivate, no password reset. The
+ * seeded users were the only users a tenant would ever have, and a forgotten
+ * password was permanent lockout with no recovery path inside the product.
+ */
 export default async function TeamPage() {
   const user = await getCurrentInternalUser();
   const isOwner = user.role === "OWNER";
 
   const members = await db.internalUser.findMany({
-    // Active only: a deactivated person still has a row, and listing them here
-    // would offer them in the successor dropdown as somebody to hand work to.
+    // Active only: listing somebody who has been stepped down would offer them
+    // in the successor dropdown as a candidate to hand work to.
     where: { tenantId: user.tenantId, status: "ACTIVE" },
     include: {
       _count: { select: { actionItems: { where: { status: "OPEN" } } } },

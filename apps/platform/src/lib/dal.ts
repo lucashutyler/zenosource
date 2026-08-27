@@ -18,12 +18,20 @@ export const getCurrentInternalUser = cache(async () => {
     where: { id: session.internalUserId },
     select: { id: true, tenantId: true, name: true, email: true, role: true, status: true },
   });
-  // Ejecting a DEACTIVATED user here is the whole session-revocation mechanism:
-  // a session is a stateless signed cookie that nothing else expires early.
+  // Ejecting a deactivated user here is the whole session-revocation
+  // mechanism: sessions are stateless signed cookies with a seven-day life, and
+  // this runs on every request that touches data.
   if (!user || user.status === "DEACTIVATED") {
-    // Next allows mutating cookies only from a Server Action or Route Handler,
-    // never a render path, and /login would loop while the cookie is still
-    // there — so the clearing happens in a route handler.
+    // The session cookie is cryptographically valid but points at a user
+    // that no longer exists (deleted account, or — in dev — a re-seed that
+    // wiped and recreated everyone with fresh IDs). Treat that exactly
+    // like no session at all instead of silently rendering broken/empty
+    // UI. Can't clear the cookie here — Next.js only allows mutating
+    // cookies from a Server Action or Route Handler, not a render path —
+    // and redirecting straight to /login would loop forever, since proxy.ts
+    // sees the (still-present) valid-looking cookie and bounces /login
+    // back to /dashboard. Redirect through a route handler that actually
+    // clears the cookie first instead.
     redirect("/api/session/clear");
   }
   return user;

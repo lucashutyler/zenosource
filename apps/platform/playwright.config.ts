@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// Runs against the test database on a dedicated port (3100) so it never
+// touches whatever's running on the normal dev server (3000) or its data.
+// `npm run test:e2e` seeds the test DB fresh before starting.
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false, // shared DB state across specs — keep it sequential
@@ -19,8 +22,11 @@ export default defineConfig({
       env: { E2E_DIST_DIR: ".next-e2e" }, // separate build dir — see next.config.ts
     },
     {
-      // A webServer rather than a globalSetup process, so Playwright waits for
-      // the URL below and tears it down afterwards.
+      // A webServer rather than globalSetup so Playwright owns the lifetime:
+      // started from globalSetup it was gone by the time a browser reached it.
+      // A separate process and not a route, because an endpoint that mints
+      // signed assertions and ships with the product is an authentication
+      // bypass behind an environment check.
       command: "dotenv -e .env.test -- tsx scripts/fake-idp.ts",
       url: "http://localhost:3101/.well-known/openid-configuration",
       reuseExistingServer: false,

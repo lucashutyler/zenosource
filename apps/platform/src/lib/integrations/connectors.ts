@@ -4,12 +4,13 @@ import { oktaConnector } from "@zenosource/okta";
 import type { ErpConnector } from "./contract";
 import type { BaseConnector, IdpConnector } from "./idp-contract";
 
-// These assignments are the conformance check: a connector package imports
-// nothing from here and restates the canonical types itself, so structural
-// typing is what makes the two halves meet.
+// Where declarations meet implementations.
 //
-// Two maps rather than one union: a union-typed lookup would not compile at the
-// call sites that use an ERP-only member, and would erase that check.
+// These assignments are the conformance check: a connector restates the
+// canonical types in its own package, and structural typing is what makes the
+// two halves meet. Two maps rather than one union — a union-typed lookup does
+// not compile at the call sites using an ERP-only member, and erases the
+// structural check these assignments exist to perform.
 
 const ERP_CONNECTORS: Record<string, ErpConnector> = {
   epicor: epicorConnector,
@@ -35,12 +36,16 @@ export function hasIdpConnector(integrationId: string): boolean {
   return integrationId in IDP_CONNECTORS;
 }
 
-/** The shape shared by every kind, for the paths that don't care which it is. */
+/** For the paths that don't care which kind: connecting, and testing a connection. */
 export function getAnyConnector(integrationId: string): BaseConnector | undefined {
   return ERP_CONNECTORS[integrationId] ?? IDP_CONNECTORS[integrationId];
 }
 
-/** Whether this build can actually do anything with an integration id. */
+/**
+ * Whether this build can do anything with an integration id. registry.test.ts
+ * asserts it agrees with the registry's `available`/`planned` status, so a card
+ * cannot offer a connect button that fails on click.
+ */
 export function isImplemented(integrationId: string): boolean {
   return integrationId in ERP_CONNECTORS || integrationId in IDP_CONNECTORS;
 }

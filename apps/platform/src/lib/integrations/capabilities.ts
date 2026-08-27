@@ -1,16 +1,29 @@
-// Declarations only, with no database and no I/O, so a client component can
-// read them too.
+// The capability vocabulary, and the features each one unlocks.
+//
+// docs/architecture.md#extensibility--capability-model calls this "the actual
+// extensibility point of the platform": an integration declares what it can
+// do, a feature declares what it needs, and a tenant gets the feature only
+// once it has connected something that supplies the need. The point is that
+// adding an integration never edits an unrelated feature, and adding a
+// feature never edits an integration.
+//
+// This file is declarations only — no database, no I/O — so both server and
+// client components can read it, and so the whole model is auditable by
+// reading one screen of code. The per-tenant half (who has connected what,
+// and whether it still works) lives in src/lib/integrations/connections.ts.
 
 /**
- * Everything an integration can claim to provide. snake_case, where a feature
- * id is kebab-case, so a capability and the feature it unlocks never read as
- * the same string.
+ * Everything an integration can claim to provide. snake_case, and distinct
+ * from feature ids below (which are kebab-case) so that a capability and the
+ * feature it unlocks never read as the same string in logs or config —
+ * `po_suggestions` the capability is supplied by Epicor, `po-suggestions` the
+ * feature is what a buyer sees.
  */
 export const CAPABILITIES = [
   // --- ERP ---
   /** Mirror purchase orders from the ERP, and write acknowledgment/date/qty changes back. */
   "po_sync",
-  /** Read MRP-generated PO suggestions. Read-only by nature. */
+  /** Read MRP-generated PO suggestions. Read-only by nature — see the note in registry.ts. */
   "po_suggestions",
   /** Mirror supplier master data. */
   "supplier_sync",
@@ -28,12 +41,19 @@ export type FeatureDefinition = {
   /** Shown wherever the feature is offered or explained as locked. */
   label: string;
   /**
-   * Every capability that must be present. All of them, not any: a feature
-   * needing either of two capabilities is two features, separately connected
-   * and separately explained.
+   * Every capability that must be present. All of them, not any — a feature
+   * needing either of two capabilities is two features, because they are
+   * separately connected and separately explained. (This is why `sso-oidc`
+   * and `sso-saml` are listed apart rather than as one `sso` with an
+   * any-of rule: an admin configures exactly one, and the locked-state copy
+   * differs.)
    */
   requires: Capability[];
-  /** Why it is locked, in the buyer's words rather than ours. */
+  /**
+   * Why it's locked, in the buyer's words, shown on the locked surface.
+   * Never "missing capability po_suggestions" — that's our vocabulary, not
+   * theirs.
+   */
   lockedBecause: string;
 };
 
@@ -61,9 +81,10 @@ export const FEATURES = {
     lockedBecause:
       "Connect your ERP to pull negotiated vendor pricing in as price lists.",
   },
-  // The three below gate only the "What's switched on" list. They are granted
-  // on CONNECTED alone, so gating sign-in or the directory endpoint on them
-  // would let a failed health check lock a whole tenant out.
+  // The three below gate only the "What's switched on" list. Sign-in and the
+  // directory endpoint read the connection row instead: these are granted only
+  // on CONNECTED, so gating them would let a failed health check lock a tenant
+  // out, or stop a customer deprovisioning somebody who has left.
   "sso-oidc": {
     label: "Single sign-on (OIDC)",
     requires: ["sso_oidc"],
@@ -86,7 +107,13 @@ export type FeatureId = keyof typeof FEATURES;
 
 export const FEATURE_IDS = Object.keys(FEATURES) as FeatureId[];
 
-/** Does this capability set satisfy this feature? */
+/**
+ * Pure resolution: does this capability set satisfy this feature? Separated
+ * from anything that reads the database so it can be tested exhaustively
+ * without one, and so the rule exists in exactly one place — the alternative
+ * is every gated surface re-deriving "do I have po_suggestions" slightly
+ * differently.
+ */
 export function featureIsUnlocked(
   feature: FeatureId,
   capabilities: ReadonlySet<Capability> | readonly Capability[]
