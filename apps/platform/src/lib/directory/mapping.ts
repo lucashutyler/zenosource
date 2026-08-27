@@ -40,8 +40,6 @@ export async function setGroupMapping(params: {
     return { ok: false, refused };
   }
 
-  // Location ids from a form are never trusted: one belonging to another tenant
-  // would grant access across the tenant boundary.
   const unique = [...new Set(params.locationIds)];
   if (unique.length > 0) {
     const found = await client.location.findMany({
@@ -90,11 +88,6 @@ export async function recomputeForGroup(params: {
   }
 }
 
-/**
- * Full recompute rather than a diff: membership, mappings and group deletion drift
- * independently, and reconciling them incrementally leaves somebody holding a site
- * nobody granted.
- */
 export async function applyGrants(params: {
   db?: PrismaClient;
   tenantId: string;
@@ -142,8 +135,6 @@ export async function applyGrants(params: {
   for (const [locationId, groupId] of wanted) {
     const already = existing.find((row) => row.locationId === locationId);
     if (already) {
-      // A manual grant that a group now also implies stays manual, so
-      // unmapping the group later cannot take it away.
       continue;
     }
     await client.internalUserLocation.create({
@@ -152,8 +143,6 @@ export async function applyGrants(params: {
     locationsAdded++;
   }
 
-  // Never a demotion: an existing OWNER in a mapped group must not lose owner
-  // because that group maps MEMBER.
   let role: "OWNER" | "MEMBER" | null = null;
   if (user.role !== "OWNER" && mapped.some((g) => g.mappedRole === "MEMBER")) {
     role = "MEMBER";

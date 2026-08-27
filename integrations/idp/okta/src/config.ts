@@ -6,32 +6,19 @@ export type SsoProtocol = "OIDC" | "SAML";
 export type OktaConfig = {
   protocol: SsoProtocol;
 
-  // --- OIDC ---
-  /**
-   * The authorization server, e.g. `https://acme.okta.com/oauth2/default`.
-   * Compared byte-for-byte against the `iss` of every token.
-   */
+  /** Compared byte-for-byte against the `iss` of every token. */
   issuer?: string;
   clientId?: string;
 
-  // --- SAML ---
   idpEntityId?: string;
   ssoUrl?: string;
-  /**
-   * Signing certificates, base64 DER. Always a list: an identity provider
-   * publishes its next certificate beside its current one during a rollover.
-   */
+  /** A list because a rollover publishes the next certificate beside the current one. */
   certificates?: string[];
-  /**
-   * Okta signs the assertion by default and the response only when asked, so
-   * this follows the customer's setting rather than assuming. The assertion
-   * signature is required unconditionally.
-   */
+  /** Okta signs the response only when asked; the assertion signature is always required. */
   responseSigned?: boolean;
 };
 
 export type OktaSecrets = {
-  /** OIDC only. The back-channel code exchange is the only thing that uses it. */
   clientSecret?: string;
 };
 
@@ -51,8 +38,7 @@ function httpsUrl(value: string): URL | null {
   } catch {
     return null;
   }
-  // http://localhost is allowed so the sign-in loop can be exercised against
-  // the fake identity provider in dev and E2E. Nothing else is.
+  // http://localhost is allowed so dev and E2E can run against the fake identity provider.
   const local = parsed.protocol === "http:" && parsed.hostname === "localhost";
   if (parsed.protocol !== "https:" && !local) return null;
   return parsed;

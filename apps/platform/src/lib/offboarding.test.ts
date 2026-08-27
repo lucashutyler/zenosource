@@ -84,7 +84,6 @@ describe("a directory deactivation", () => {
 
     const after = await db.actionItem.findUnique({ where: { id: item.id } });
     expect(after?.internalOwnerId).toBe(owner.id);
-    // Its clock never restarts: the work is late by however long it has been late.
     expect(after?.status).toBe("OPEN");
     expect(after?.openedAt.getTime()).toBe(item.openedAt.getTime());
   });
@@ -97,8 +96,6 @@ describe("a directory deactivation", () => {
   });
 
   it("does not hand the leaver's locations to the successor", async () => {
-    // An owner is unrestricted already, so copying locations here would be a privilege
-    // grant issued by an offboarding.
     const { owner, leaver } = await scenario();
     await deactivateInternalUser({ db, userId: leaver.id, source: "DIRECTORY" });
 
@@ -118,7 +115,6 @@ describe("a directory deactivation", () => {
     const assignment = await db.internalUserLocation.findFirst({
       where: { internalUserId: owner.id, locationId: location.id },
     });
-    // A hand-made grant, so the next directory push cannot revoke it.
     expect(assignment?.source).toBe("MANUAL");
   });
 

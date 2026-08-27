@@ -17,7 +17,6 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-/** The primary work address, falling back to the first one present. */
 export function readEmail(body: Record<string, unknown>): string {
   const emails = Array.isArray(body.emails) ? body.emails : [];
   const entries = emails.map(record).filter((e): e is Record<string, unknown> => e !== null);
@@ -25,8 +24,6 @@ export function readEmail(body: Record<string, unknown>): string {
   const work = entries.find((e) => text(e.type).toLowerCase() === "work");
   const first = entries[0];
   const chosen = text(primary?.value) || text(work?.value) || text(first?.value);
-  // userName is the fallback, not the first choice: it may be a login name
-  // rather than an address.
   return (chosen || text(body.userName)).toLowerCase();
 }
 
@@ -55,8 +52,7 @@ export function parseUser(body: unknown): ParseOutcome<ParsedUser> {
   if (typeof activeRaw === "boolean") {
     active = activeRaw;
   } else if (typeof activeRaw === "string") {
-    // Refused rather than defaulted: a missed `active: false` leaves a departed
-    // employee with their access.
+    // Defaulting instead of refusing leaves a departed employee their access.
     const lowered = activeRaw.trim().toLowerCase();
     if (lowered === "true") active = true;
     else if (lowered === "false") active = false;

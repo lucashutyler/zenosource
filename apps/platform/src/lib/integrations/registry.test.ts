@@ -124,8 +124,6 @@ describe("feature resolution", () => {
   });
 
   it("one identity-provider connection never verifies both sign-in protocols", () => {
-    // A connection carries one protocol, which is why these are two features
-    // rather than one `sso` with an any-of rule.
     expect(unlockedFeatures(["sso_oidc", "scim_provisioning"])).toEqual(
       expect.arrayContaining(["sso-oidc", "scim-provisioning"])
     );

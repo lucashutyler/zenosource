@@ -4,8 +4,7 @@ import { resolveTenantBySlug } from "@/lib/auth/tenant-resolution";
 import { SSO_COOKIE } from "@/lib/auth/sso-request";
 import { safeReturnTo } from "@/lib/auth/return-to";
 
-// The SAML path underneath reaches for the XML stack, which is CommonJS and is
-// listed in next.config.ts's serverExternalPackages.
+// The XML stack the SAML path reaches for is CommonJS: see serverExternalPackages.
 export const runtime = "nodejs";
 
 export async function GET(
@@ -23,8 +22,6 @@ export async function GET(
     return NextResponse.redirect(new URL("/login?sso=unavailable", request.nextUrl));
   }
 
-  // Nothing downstream trusts this: whoever comes back is whoever their
-  // identity provider says came back.
   const hint = request.nextUrl.searchParams.get("hint");
   const started = await beginSignIn({
     tenant,
@@ -40,9 +37,7 @@ export async function GET(
   response.cookies.set(SSO_COOKIE, started.cookieValue, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    // Not `lax`: a SAML response arrives as a cross-site form POST, which a Lax
-    // cookie is not sent on. `none` requires `secure`, so dev and E2E, which
-    // serve plain HTTP, fall back to the server-side single-use row alone.
+    // A Lax cookie is not sent on the cross-site POST a SAML response arrives as.
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/api/sso",
     maxAge: 600,

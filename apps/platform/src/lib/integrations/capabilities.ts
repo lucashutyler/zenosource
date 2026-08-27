@@ -81,10 +81,8 @@ export const FEATURES = {
     lockedBecause:
       "Connect your ERP to pull negotiated vendor pricing in as price lists.",
   },
-  // The three below gate only the "What's switched on" list. Sign-in and the
-  // directory endpoint read the connection row instead: these are granted only
-  // on CONNECTED, so gating them would let a failed health check lock a tenant
-  // out, or stop a customer deprovisioning somebody who has left.
+  // These gate only the "What's switched on" list. Sign-in reads the connection
+  // row instead — gating it would let a failed health check lock a tenant out.
   "sso-oidc": {
     label: "Single sign-on (OIDC)",
     requires: ["sso_oidc"],

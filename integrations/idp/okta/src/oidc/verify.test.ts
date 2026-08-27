@@ -13,8 +13,6 @@ let config: OktaConfig;
 const secrets: OktaSecrets = { clientSecret: "zenosource-dev-secret" };
 
 beforeEach(() => {
-  // A distinct issuer and a cleared cache per spec, so one test's keys can
-  // never answer another's.
   resetJwksCache();
   fake = createFakeOkta({ issuer: `https://acme-${Math.random().toString(36).slice(2)}.okta.test/oauth2/default` });
   config = { protocol: "OIDC", issuer: fake.issuer, clientId: fake.clientId };
@@ -235,8 +233,6 @@ describe("token verification", () => {
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    // REJECTED would leave a broken connection looking healthy while nobody
-    // could sign in.
     expect(result.kind).toBe("MISCONFIGURED");
   });
 

@@ -68,9 +68,7 @@ export async function runReminderJob(params: {
 
   for (const item of dueItems) {
     if (item.ownerType === "INTERNAL_USER" && item.internalOwnerId) {
-      // Skipped, never reassigned: this job runs from the `Chase all N`
-      // button, and a chase click must not silently rewrite who owns what.
-      // Handing the work over is deactivation's job (src/lib/offboarding.ts).
+      // Skipped, never reassigned: a chase click must not rewrite ownership.
       if (item.internalOwner?.status === "DEACTIVATED") continue;
       const group = internalGroups.get(item.internalOwnerId) ?? [];
       group.push(item);

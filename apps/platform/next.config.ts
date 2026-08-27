@@ -20,8 +20,7 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@zenosource/epicor", "@zenosource/okta"],
 
   // The XML stack under the SAML verifier is CommonJS and reaches for Node
-  // builtins at load time; bundled, it fails at the first assertion rather than
-  // at compile time. The routes that use it are all `runtime = "nodejs"`.
+  // builtins at load time; bundled, it fails at the first assertion.
   serverExternalPackages: [
     "@node-saml/node-saml",
     "@xmldom/xmldom",

@@ -56,11 +56,8 @@ export type FakeOkta = {
   fetchImpl: FetchLike;
   authorize(url: string, options?: { user?: FakeOktaUser }): { code: string; state: string };
   signAssertion(options: SignAssertionOptions): string;
-  /** Base64 of the above, as it arrives in a form post. */
   encodeResponse(xml: string): string;
   signIdToken(claims: Record<string, unknown>, options?: { alg?: string; kid?: string }): Promise<string>;
-  /** Serve this exact ID token from the next token exchange: the only way to
-   * test a token no honest identity provider would mint. */
   serveNextIdToken(token: string): void;
   handler(request: IncomingMessage, response: ServerResponse): void;
 };
@@ -290,8 +287,7 @@ export function createFakeOkta(options: FakeOktaOptions = {}): FakeOkta {
     };
 
     if (url.pathname.endsWith("/.well-known/openid-configuration")) {
-      // Endpoints are reported relative to the request host, so a dev issuer
-      // on http://localhost:3101 discovers endpoints on that same origin.
+      // Endpoints follow the request host, so a dev issuer on localhost discovers itself.
       const origin = `http://${request.headers.host ?? "localhost"}`;
       return send(200, {
         ...discovery(),

@@ -79,8 +79,7 @@ export async function runSync(params: {
 
   const definition = getIntegration(integrationId);
   if (definition?.type === "idp") {
-    // Not left to the check below: "no connector is registered" would send
-    // whoever reads it looking for a registration that is not missing.
+    // Not left to the check below, whose message names a missing registration.
     throw new Error(`${definition.name} is an identity provider — there is nothing to sync.`);
   }
 

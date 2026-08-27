@@ -2,8 +2,7 @@ import { test, expect } from "@playwright/test";
 import { loginAs } from "./helpers/login";
 import { withTestDb } from "./helpers/db";
 
-// `next dev` compiles the connector on first request; warming it here keeps a
-// slow first compile from reading as a failed sign-in.
+// `next dev` compiles the connector on first request; a cold compile reads as a failed sign-in.
 test.beforeAll(async ({ playwright }) => {
   const request = await playwright.request.newContext({ baseURL: "http://localhost:3100" });
   for (const route of ["/api/sso/acme/start", "/api/sso/acme/callback", "/api/sso/acme/metadata"]) {
@@ -105,8 +104,7 @@ test("a member cannot manage single sign-on", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Create token" })).toHaveCount(0);
 });
 
-// LAST, deliberately: this removes casey@acme.test's password, which every
-// earlier spec signs in with.
+// LAST, deliberately: this removes casey@acme.test's password, which earlier specs sign in with.
 test("signing in through the directory takes the password away", async ({ page, context }) => {
   await signInThroughIdp(page, "casey@acme.test");
   await expect(page).toHaveURL(/\/dashboard$/);
@@ -120,7 +118,6 @@ test("signing in through the directory takes the password away", async ({ page, 
   });
   expect(adopted.passwordHash).toBeNull();
   expect(adopted.externalRef).toBe("00uSEEDCASEY");
-  // Adoption changes how somebody signs in, never what they may do.
   expect(adopted.role).toBe("MEMBER");
 
   await context.clearCookies();

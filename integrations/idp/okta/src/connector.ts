@@ -25,11 +25,6 @@ export type OktaConnectorOptions = {
   fetchImpl?: FetchLike;
 };
 
-/**
- * One connector, two protocols, not two registry entries:
- * `IntegrationConnection` is unique on (tenant, integration), and directory
- * provisioning is protocol-independent.
- */
 export class OktaConnector implements IdpConnector {
   readonly integrationId = "okta";
 
@@ -54,10 +49,6 @@ export class OktaConnector implements IdpConnector {
     return checkHealth(this.fetchImpl(), config);
   }
 
-  /**
-   * OIDC calls the slot `state`, SAML calls it `RelayState`. Not a trust
-   * decision — the value is a lookup key for a single-use row.
-   */
   readHandle(callback: SignInCallback): string | null {
     return callback.params.state || callback.params.RelayState || null;
   }
@@ -122,8 +113,6 @@ export class OktaConnector implements IdpConnector {
     request: DirectoryRequest,
     store: DirectoryStore
   ): Promise<DirectoryResponse> {
-    // The directory leg is inbound: everything that authorizes it was settled
-    // by the platform before this is called, so no session is read.
     return handleDirectoryRequest(request, store);
   }
 }

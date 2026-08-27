@@ -3,9 +3,6 @@ import { discover } from "./oidc/discovery";
 import type { OktaConfig } from "./config";
 import type { FetchLike, HealthReport } from "./types";
 
-// `scim_provisioning` is granted on any otherwise-healthy connection because
-// we are the directory server: there is nothing outbound to probe.
-
 export type OktaCapability = "sso_oidc" | "sso_saml" | "scim_provisioning";
 
 export const CERTIFICATE_WARNING_DAYS = 45;
@@ -33,8 +30,6 @@ function certificateWindow(
     }
     if (notBefore.getTime() <= now && notAfter.getTime() > now) {
       anyCurrent = true;
-      // The soonest expiry among the certificates usable now; the next one's
-      // date would reassure about a certificate nothing is signing with yet.
       if (!earliest || notAfter < earliest) earliest = notAfter;
     }
   }
@@ -107,8 +102,6 @@ export async function checkHealth(
     verifiedCapabilities: ["sso_saml", "scim_provisioning"],
   };
   if (window.earliestNotAfter) {
-    // Reported, never enforced: a certificate with twelve days left is not a
-    // broken connection, and marking it broken would withdraw sign-in early.
     report.credentialExpiresAt = window.earliestNotAfter.toISOString();
   }
   return report;

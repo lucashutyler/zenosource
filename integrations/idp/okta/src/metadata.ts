@@ -9,12 +9,7 @@ const MAX_BYTES = 1_000_000;
 
 export type IdpMetadata = {
   entityId: string;
-  /** Where the browser is sent to start a sign-in. Redirect binding preferred. */
   ssoUrl: string;
-  /**
-   * Signing certificates, base64 DER, in document order. A list because a
-   * rollover publishes the next certificate beside the current one.
-   */
   certificates: string[];
 };
 
@@ -22,7 +17,6 @@ export type MetadataResult =
   | { ok: true; metadata: IdpMetadata }
   | { ok: false; error: string };
 
-/** Strips PEM armour and every kind of whitespace. */
 export function normalizeCertificate(raw: string): string {
   return raw
     .replace(/-----BEGIN CERTIFICATE-----/g, "")

@@ -157,18 +157,13 @@ export type HealthReport = {
   detail?: string;
   /**
    * Which of the declared capabilities this instance can actually serve. An
-   * ERP whose API key is scoped to some services and not others is healthy
-   * but cannot supply every capability the integration declares, and
-   * pretending otherwise unlocks a feature that then renders empty forever.
+   * ERP whose credential is scoped to some services and not others is healthy
+   * and still cannot supply every capability the integration declares.
    */
   verifiedCapabilities?: string[];
   /**
-   * When the credential this connection depends on stops being valid — a
-   * signing certificate's notAfter, for an integration that has one.
-   *
    * Not a reason to report the connection unhealthy: an identity provider
-   * publishes its next certificate alongside its current one during a
-   * rollover, so divergence is the healthy state.
+   * publishes its next certificate during a rollover, so divergence is normal.
    */
   credentialExpiresAt?: TimestampString;
 };

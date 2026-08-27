@@ -39,9 +39,8 @@ export const getConnectionsForTenant = cache(async (tenantId: string) => {
  * Every capability this tenant currently has, intersected with what the
  * connection actually verified. A capability is granted only when the
  * integration declares it *and* the last health check confirmed the instance
- * can serve it. A partial grant is normal — a credential scoped to some of an
- * integration's services and not others — and unlocking the feature anyway
- * produces a screen that is empty forever with no explanation.
+ * can serve it. Partial grants are normal, and unlocking a feature the
+ * connection cannot serve renders a screen that is empty forever.
  */
 export const capabilitiesForTenant = cache(
   async (tenantId: string): Promise<Set<Capability>> => {
@@ -95,11 +94,7 @@ export async function requireFeature(tenantId: string, feature: FeatureId): Prom
   if (!(await isFeatureEnabled(tenantId, feature))) notFound();
 }
 
-/**
- * When the credential behind a connection stops being valid, if it said.
- * Nothing branches on it and nothing is withdrawn because of it: a certificate
- * with twelve days left is not a broken connection.
- */
+/** Reported only. Nothing is withdrawn because of it. */
 export function credentialExpiryOf(connection: IntegrationConnection): Date | null {
   const config = connection.config as { credentialExpiresAt?: unknown } | null;
   const value = config?.credentialExpiresAt;
@@ -167,8 +162,7 @@ export async function disconnect(tenantId: string, integrationId: string) {
       healthDetail: null,
     },
   });
-  // A live directory token after a disconnect is a credential at rest that can
-  // still deactivate users.
+  // A live directory token could still deactivate users.
   await revokeAllForConnection(connection.id);
   await resolveOpenActionItemsFor("INTEGRATION_CONNECTION", connection.id, {
     actionType: "INTEGRATION_RECONNECT",
@@ -214,8 +208,7 @@ export async function recordHealth(connectionId: string, health: HealthReport) {
       healthDetail: health.detail ?? null,
       // Re-probing capabilities on every check matters: an admin narrowing an
       // API key's Access Scope is a silent feature withdrawal otherwise.
-      // Spread, never replaced: a wholesale write erases the integration's own
-      // connect-form config on the first health check after connecting.
+      // Spread, never replaced: a wholesale write erases the connect-form config.
       config: health.verifiedCapabilities
         ? {
             ...((existing.config as Record<string, unknown>) ?? {}),

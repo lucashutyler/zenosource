@@ -30,10 +30,6 @@ function fail(detail: string): GuardFailure {
   return { ok: false, detail };
 }
 
-/**
- * A document type declaration has no legitimate place in a SAML response and
- * is how entity expansion and external entity resolution both start.
- */
 export function guardEncodedResponse(
   encoded: string
 ): { ok: true; xml: string } | GuardFailure {
@@ -118,9 +114,7 @@ export function guardStructure(
     return fail("That sign-in response carries more than one assertion.");
   }
 
-  // Canonicalisation drops comments, so one inserted mid-value leaves the digest
-  // intact while splitting a text node in two — CVE-2025-29775. No identity
-  // provider puts a comment in an assertion.
+  // Canonicalisation drops comments, so one mid-value splits a text node without changing the digest — CVE-2025-29775.
   if (containsComment(assertions[0])) {
     return fail("That sign-in response has a comment inside its assertion.");
   }
@@ -161,8 +155,6 @@ export function guardStructure(
     }
     const uri = references[0].getAttribute("URI") ?? "";
     if (uri !== `#${parentId}`) {
-      // A reference pointing anywhere but at its own parent is the wrapping
-      // attack: the signature is real, and over something other than what is read.
       return fail("That sign-in response has a signature that does not cover the element it sits in.");
     }
 
@@ -170,8 +162,6 @@ export function guardStructure(
       .map((t) => t.getAttribute("Algorithm") ?? "")
       .filter(Boolean);
     if (transforms.length !== 2 || transforms[0] !== ENVELOPED || transforms[1] !== EXC_C14N) {
-      // An XPath, an XSLT or a with-comments canonicalisation changes what the
-      // digest covered relative to what a reader sees.
       return fail("That sign-in response uses a signature transform that isn't accepted.");
     }
 
@@ -189,8 +179,7 @@ export function guardStructure(
       return fail("That sign-in response uses a canonicalisation method that isn't accepted.");
     }
 
-    // Selection, never verification. An embedded certificate that isn't one
-    // of the tenant's is a refusal rather than a new trust anchor.
+    // The embedded certificate selects which stored one to check, never verifies.
     const embedded = elements(signature, DS_NS, "X509Certificate")
       .map((node) => normalizeCertificate(node.textContent ?? ""))
       .filter(Boolean);
@@ -206,11 +195,7 @@ export function guardStructure(
   return { ok: true };
 }
 
-/**
- * `expectedRequestId` is required, not optional: an identity-provider-initiated
- * sign-in has no such value, and accepting one would leave the assertion's own
- * validity period as the only replay window.
- */
+// `expectedRequestId` is required, not optional: an identity-provider-initiated sign-in is refused.
 export function guardBindings(
   doc: Document,
   expectations: {
@@ -268,8 +253,6 @@ export function guardBindings(
   if (audiences.length === 0) {
     return fail("That sign-in response names no audience.");
   }
-  // The per-tenant identifier is what stops an assertion minted for one customer
-  // being replayed at another that federates with the same identity provider.
   if (!audiences.includes(expectations.serviceProviderRef)) {
     return fail("That sign-in response was issued for a different organization.");
   }

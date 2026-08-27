@@ -1,7 +1,5 @@
 export const ATTACKER_EMAIL = "attacker@evil.test";
 
-// Identity providers emit `<ds:Signature>` and xml-crypto emits `<Signature
-// xmlns="...">`; both are the same element, so match either prefix.
 const SIGNATURE = /<(\w+:)?Signature[\s>][\s\S]*?<\/(\w+:)?Signature>/;
 const ASSERTION = /<(\w+:)?Assertion[\s>][\s\S]*?<\/(\w+:)?Assertion>/;
 
@@ -42,8 +40,7 @@ export function duplicateAssertionId(xml: string): string {
   return xml.replace(signed, `${signed}${forge(signed, id)}`);
 }
 
-/** Canonicalisation drops comments, so the digest still matches while a naive
- * text read returns only the first text node — the shape behind CVE-2025-29775. */
+/** Canonicalisation drops the comment, so the digest still matches — CVE-2025-29775. */
 export function commentInNameId(xml: string): string {
   return xml.replace(
     /(<(?:\w+:)?NameID[^>]*>)([^<]*)(<\/(?:\w+:)?NameID>)/,
@@ -54,7 +51,6 @@ export function commentInNameId(xml: string): string {
   );
 }
 
-/** An XPath transform can change what the digest actually covered. */
 export function xpathTransform(xml: string): string {
   return xml.replace(
     /<(\w+:)?Transform Algorithm="http:\/\/www\.w3\.org\/2001\/10\/xml-exc-c14n#"\s*\/>/,
@@ -76,7 +72,6 @@ export function stripSignature(xml: string): string {
   return xml.replace(SIGNATURE, "");
 }
 
-/** Points the reference at the response rather than the assertion it sits in. */
 export function swapReferenceUri(xml: string): string {
   const responseId = /<(?:\w+:)?Response[^>]*\sID="([^"]*)"/.exec(xml)?.[1] ?? "_r";
   return xml.replace(/(<(?:\w+:)?Reference URI=")#[^"]*(")/, `$1#${responseId}$2`);

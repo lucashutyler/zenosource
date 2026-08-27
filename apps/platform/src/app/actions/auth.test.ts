@@ -4,8 +4,6 @@ import { PrismaClient } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { wipeTestDb } from "@/lib/testing/wipe-test-db";
 
-// createSession writes a cookie, which needs a request context Vitest doesn't
-// have; redirect() throws a framework-internal signal.
 const created: { internalUserId: string; tenantId: string }[] = [];
 vi.mock("@/lib/session", () => ({
   createSession: async (payload: { internalUserId: string; tenantId: string }) => {
@@ -64,7 +62,6 @@ async function person(options: {
   return { tenant, user };
 }
 
-/** login() redirects on success, which the mock turns into a throw. */
 async function attempt(email: string, password: string) {
   try {
     return await login(undefined, form(email, password));
@@ -82,8 +79,6 @@ describe("signing in with a password", () => {
   });
 
   it("finds the right organization when one address exists in two", async () => {
-    // Email is unique per tenant, not globally: taking the first match signs
-    // somebody into the wrong company's purchase orders.
     const a = await person({ slug: "auth-a", email: "shared@example.test", password: "password-a" });
     const b = await person({ slug: "auth-b", email: "shared@example.test", password: "password-b" });
 
@@ -103,7 +98,6 @@ describe("signing in with a password", () => {
   });
 
   it("refuses a federated account with no password rather than throwing on a null hash", async () => {
-    // Treating a null hash as a match makes every federated user passwordless.
     await person({ slug: "auth-a", email: "federated@acme.test", password: null });
     const result = await attempt("federated@acme.test", "anything-at-all");
     expect(result).toEqual({ error: "Invalid email or password." });
@@ -111,8 +105,6 @@ describe("signing in with a password", () => {
   });
 
   it("says the same thing however the attempt failed", async () => {
-    // A more specific message tells a stranger which addresses exist here and
-    // which organizations federate.
     await person({ slug: "auth-a", email: "real@acme.test" });
     const wrong = await attempt("real@acme.test", "not-the-password");
     const missing = await attempt("nobody@acme.test", PASSWORD);

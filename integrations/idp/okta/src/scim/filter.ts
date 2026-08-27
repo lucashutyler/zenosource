@@ -1,6 +1,3 @@
-// An unsupported filter is refused, never ignored: silently dropping a clause
-// would answer a query that asked for one user with the whole tenant.
-
 export type ParsedFilter =
   | { ok: true; attribute: string; value: string }
   | { ok: false; detail: string }

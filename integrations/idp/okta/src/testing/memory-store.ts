@@ -6,7 +6,7 @@ import type {
 } from "../types";
 
 export type MemoryStoreOptions = {
-  /** Emails this store refuses to deactivate, standing in for a last owner. */
+  /** Emails, not external refs. */
   undeactivatable?: string[];
 };
 
@@ -45,8 +45,7 @@ export function createMemoryStore(
         (u) => u.email.toLowerCase() === email.toLowerCase() && u.externalRef !== externalRef
       );
       if (clash) {
-        // Adoption, not conflict: the same person under a password account is
-        // the normal case at a first federation.
+        // Adoption, not conflict: the password account of the same person.
         users.delete(clash.externalRef);
       }
       const existing = users.get(externalRef);

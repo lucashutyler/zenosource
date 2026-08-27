@@ -61,7 +61,6 @@ describe("provisioning", () => {
     expect(await db.internalUser.count({ where: { tenantId: tenant.id } })).toBe(2);
     expect(after.externalRef).toBe("00uCASEY");
     expect(after.role).toBe("OWNER");
-    // The password goes, or the directory is not actually in control of access.
     expect(after.passwordHash).toBeNull();
   });
 
@@ -77,7 +76,6 @@ describe("provisioning", () => {
   });
 
   it("refuses a second directory record claiming one address", async () => {
-    // Relaxing this would let one real person sign in as another.
     const { store } = await scenario();
     await store.createUser({ externalRef: "00uONE", email: "shared@acme.test", name: "One" });
     const second = await store.createUser({
@@ -89,8 +87,6 @@ describe("provisioning", () => {
   });
 
   it("never lists people the directory did not create", async () => {
-    // A hand-made password account is not the directory's to enumerate: returning it
-    // invites a reconciliation that deactivates everyone it does not recognise.
     const { store } = await scenario();
     await store.createUser({ externalRef: "00uNEW", email: "new@acme.test", name: "New" });
     const listed = await store.listUsers({ skip: 0, take: 100 });
@@ -131,7 +127,6 @@ describe("deactivation through the directory", () => {
   });
 
   it("deactivates rather than deletes, and reports it as inactive afterwards", async () => {
-    // A directory reads the resource back to confirm the change took.
     const { store } = await scenario();
     await store.createUser({ externalRef: "00uNEW", email: "new@acme.test", name: "New" });
 

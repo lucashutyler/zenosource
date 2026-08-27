@@ -4,9 +4,7 @@ import type { FetchLike } from "../types";
 type KeySet = ReturnType<typeof createRemoteJWKSet>;
 
 const CACHE_MAX_AGE_MS = 600_000;
-// The cooldown floors refetches triggered by an unknown `kid`. Without it an
-// unauthenticated callback carrying a random `kid` amplifies one forged request
-// into one key fetch at the customer's identity provider.
+// Without it, an unknown `kid` in a forged callback is a key fetch at the customer's Okta.
 const COOLDOWN_MS = 30_000;
 
 const keySets = new Map<string, KeySet>();

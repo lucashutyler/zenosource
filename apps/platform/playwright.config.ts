@@ -22,11 +22,8 @@ export default defineConfig({
       env: { E2E_DIST_DIR: ".next-e2e" }, // separate build dir — see next.config.ts
     },
     {
-      // A webServer rather than globalSetup so Playwright owns the lifetime:
-      // started from globalSetup it was gone by the time a browser reached it.
-      // A separate process and not a route, because an endpoint that mints
-      // signed assertions and ships with the product is an authentication
-      // bypass behind an environment check.
+      // A separate process and not a route: an endpoint that mints signed
+      // assertions and ships with the product is an authentication bypass.
       command: "dotenv -e .env.test -- tsx scripts/fake-idp.ts",
       url: "http://localhost:3101/.well-known/openid-configuration",
       reuseExistingServer: false,

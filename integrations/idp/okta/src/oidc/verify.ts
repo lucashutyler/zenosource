@@ -28,7 +28,6 @@ export function codeChallengeFor(verifier: string): string {
   return base64url(createHash("sha256").update(verifier, "ascii").digest());
 }
 
-/** The `at_hash` binding: the left-most half of the SHA-256 of the access token, base64url. */
 export function accessTokenHash(accessToken: string): string {
   const digest = createHash("sha256").update(accessToken, "ascii").digest();
   return base64url(digest.subarray(0, digest.length / 2));
@@ -61,14 +60,10 @@ export async function beginSignIn(
   url.searchParams.set("nonce", nonce);
   url.searchParams.set("code_challenge", codeChallengeFor(codeVerifier));
   url.searchParams.set("code_challenge_method", "S256");
-  // A courtesy that authorizes nothing: whoever comes back is verified
-  // identically whether or not this was sent.
   if (params.loginHint) url.searchParams.set("login_hint", params.loginHint);
 
   return {
     url: url.toString(),
-    // This protocol has no separate request id: `state` is what a response is
-    // matched back to.
     requestId: params.handle,
     nonce,
     codeVerifier,
@@ -136,8 +131,6 @@ async function exchangeCode(
   }
 
   if (!response.ok || tokens.error) {
-    // `invalid_client` is a setup problem; everything else here is about this
-    // one attempt and must not mark a working connection broken.
     const misconfigured = tokens.error === "invalid_client" || response.status === 401;
     return {
       ok: false,
@@ -165,7 +158,6 @@ export async function completeSignIn(
   callback: SignInCallback,
   expectations: SignInExpectations
 ): Promise<SignInResult> {
-  // `access_denied` is a person declining a consent screen, not a broken connection.
   const error = callback.params.error;
   if (error) {
     return {
@@ -202,8 +194,7 @@ export async function completeSignIn(
 
   const idToken = exchanged.tokens.id_token as string;
 
-  // Read only to refuse early with a clear reason: nothing below selects a key
-  // or an algorithm from the token's own header.
+  // For an early, clear refusal only: nothing below selects a key or an algorithm from it.
   let headerAlgorithm = "";
   try {
     headerAlgorithm = decodeProtectedHeader(idToken).alg ?? "";
@@ -229,8 +220,6 @@ export async function completeSignIn(
     claims = verified.payload as Record<string, unknown>;
   } catch (thrown) {
     const code = (thrown as { code?: string })?.code ?? "";
-    // An expired token is this attempt failing; an unverifiable one is the
-    // connection's trust being wrong.
     const expired = code === "ERR_JWT_EXPIRED";
     return {
       ok: false,

@@ -50,8 +50,7 @@ describe("the Epicor connector conforms to the platform's contract", () => {
 
 describe("the Okta connector conforms to the platform's contract", () => {
   it("satisfies IdpConnector structurally", () => {
-    // Two contracts rather than one union: a union would make this line
-    // compile while checking nothing.
+    // A union would make this line compile while checking nothing.
     const connector: IdpConnector = oktaConnector;
     expect(connector.integrationId).toBe("okta");
   });

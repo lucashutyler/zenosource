@@ -20,8 +20,6 @@ test("an owner sees what's connected, what isn't, and what that costs them", asy
   await expect(page.getByRole("heading", { name: "Okta" })).toBeVisible();
   await expect(page.getByText("Phase 3 builds it")).toHaveCount(0);
 
-  // The seed connects an identity provider and leaves the ERP unconnected, so
-  // this page shows both halves of the capability model at once.
   await expect(page.getByText("Single sign-on (OIDC)")).toBeVisible();
   await expect(page.getByText("Directory provisioning (SCIM)")).toBeVisible();
   // Connecting an identity provider must not reach into procurement features.
@@ -35,9 +33,7 @@ test("the connect form asks for both credentials and marks every field", async (
 
   // Every control labelled — the Wave 1 rule, which matters most on a form
   // filled in once from values read off two different Epicor screens.
-  //
-  // Unscoped is unambiguous: connect forms are dispatched on integration type
-  // and no two share a label. If that changes, strict mode fails these.
+
   await expect(page.getByLabel("Kinetic server URL")).toBeVisible();
   await expect(page.getByLabel("Company ID")).toBeVisible();
   await expect(page.getByLabel("API key")).toBeVisible();

@@ -22,8 +22,6 @@ export default async function TeamPage() {
   const isOwner = user.role === "OWNER";
 
   const members = await db.internalUser.findMany({
-    // Active only: listing somebody who has been stepped down would offer them
-    // in the successor dropdown as a candidate to hand work to.
     where: { tenantId: user.tenantId, status: "ACTIVE" },
     include: {
       _count: { select: { actionItems: { where: { status: "OPEN" } } } },

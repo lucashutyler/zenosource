@@ -58,8 +58,7 @@ export function directoryStoreFor(context: {
     },
 
     async listUsers({ skip, take, email, externalRef }) {
-      // Only users this connection provisioned. Returning hand-made accounts would invite
-      // the directory to "reconcile" by deactivating everyone it does not recognise.
+      // Only this connection's users: a directory deactivates any it is shown and does not know.
       const where = {
         tenantId,
         sourceIntegrationId: integrationId,
@@ -100,7 +99,6 @@ export function directoryStoreFor(context: {
 
       if (byEmail) {
         if (byEmail.sourceIntegrationId && byEmail.externalRef !== externalRef) {
-          // Refused rather than reassigned: either guess signs one real person in as another.
           const refused = "Another directory user in this organization already has that address.";
           await recordDirectoryEvent({
             db,
@@ -115,8 +113,7 @@ export function directoryStoreFor(context: {
           return { refused };
         }
 
-        // Adopting the existing row keeps their history, and clearing the password leaves
-        // the directory actually in control of access.
+        // passwordHash cleared: a second way in would survive being disabled at the directory.
         const adopted = await db.internalUser.update({
           where: { id: byEmail.id },
           data: { sourceIntegrationId: integrationId, externalRef, name, passwordHash: null },
@@ -169,8 +166,6 @@ export function directoryStoreFor(context: {
           select: { id: true },
         });
         if (clash && clash.id !== row.id) {
-          // Nothing is mutated before this refusal: a partial apply would leave the name
-          // changed and the address not, with the directory told the whole thing failed.
           const refused = "Another user in this organization already has that address.";
           await recordDirectoryEvent({
             db,
@@ -211,8 +206,7 @@ export function directoryStoreFor(context: {
       if (!row) return { refused: "No such user." };
 
       if (!active) {
-        // moveLocations stays false: a directory-triggered handover must not grant the
-        // successor sites nobody assigned them.
+        // false: a directory handover must not grant the successor sites nobody assigned them.
         const result = await deactivateInternalUser({
           db,
           userId: row.id,
@@ -268,8 +262,6 @@ export function directoryStoreFor(context: {
     },
 
     async upsertGroup(group) {
-      // Created inert: no mapped role, no locations. A pushed group grants nothing until
-      // an owner here decides what it means.
       const existing = await db.directoryGroup.findUnique({
         where: { connectionId_externalRef: { connectionId, externalRef: group.externalRef } },
         select: { id: true },
@@ -368,10 +360,6 @@ export function directoryStoreFor(context: {
     });
   }
 
-  /**
-   * An id from another tenant resolves to nobody rather than erroring: an error would
-   * confirm to a caller that the id exists somewhere.
-   */
   async function resolveMembers(memberRefs: string[]): Promise<string[]> {
     if (memberRefs.length === 0) return [];
     const rows = await db.internalUser.findMany({

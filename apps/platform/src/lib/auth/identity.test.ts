@@ -46,7 +46,6 @@ describe("turning a verified identity into somebody on the team", () => {
     expect(user.email).toBe("new@acme.test");
     expect(user.role).toBe("MEMBER");
     expect(user.passwordHash).toBeNull();
-    // Being able to sign in is not being handed somebody's purchase orders.
     expect(await db.internalUserLocation.count({ where: { internalUserId: user.id } })).toBe(0);
   });
 
@@ -73,8 +72,6 @@ describe("turning a verified identity into somebody on the team", () => {
     const after = await db.internalUser.findUniqueOrThrow({ where: { id: existing.id } });
     expect(after.role).toBe("OWNER");
     expect(after.externalRef).toBe("00uJORDAN");
-    // The password goes: a second, unmanaged way in would mean disabling
-    // somebody at the identity provider does not actually disable them.
     expect(after.passwordHash).toBeNull();
 
     const events = await db.directoryEvent.findMany({ where: { tenantId: tenant.id } });
@@ -82,8 +79,6 @@ describe("turning a verified identity into somebody on the team", () => {
   });
 
   it("matches on the directory's stable key, never on the address", async () => {
-    // A directory can change an email, so matching on it would mean renaming
-    // one account hands you another.
     const { tenant, connection } = await scenario();
     const first = await resolve(tenant.id, connection.id, {
       subject: "00uCASEY",
@@ -159,8 +154,6 @@ describe("turning a verified identity into somebody on the team", () => {
       subject: "00uME",
       email: "taken@acme.test",
     });
-    // Sign-in still succeeds: refusing would lock somebody out over another
-    // person's rename. The stale address is left alone and the clash recorded.
     expect(renamed.ok).toBe(true);
     const after = await db.internalUser.findUniqueOrThrow({ where: { id: mine.userId } });
     expect(after.email).toBe("me@acme.test");

@@ -1,7 +1,6 @@
 import type { ParseOutcome } from "./parse";
 
-// A shape not matched here is an error, never a silent no-op: a 200 stops the
-// directory retrying a deactivation that did not happen.
+// A patch we cannot parse is a 400 — a 200 stops the directory retrying.
 
 export const PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
 
@@ -15,7 +14,6 @@ export type GroupPatch = {
   displayName?: string;
   add: string[];
   remove: string[];
-  /** Present when the directory replaced the whole membership at once. */
   replace?: string[];
 };
 
@@ -55,7 +53,6 @@ function operations(body: unknown): ParseOutcome<Record<string, unknown>[]> {
   return { ok: true, value: parsed };
 }
 
-/** `members[value eq "00u123"]` → `00u123`. */
 function memberFromPath(path: string): string | null {
   const match = /^members\[\s*value\s+eq\s+"((?:[^"\\]|\\.)*)"\s*\]$/i.exec(path.trim());
   return match ? match[1].replace(/\\(.)/g, "$1") : null;
@@ -109,8 +106,7 @@ export function parseUserPatch(body: unknown): ParseOutcome<UserPatch> {
             [text(name?.givenName), text(name?.familyName)].filter(Boolean).join(" ");
           if (formatted) patch.name = formatted;
         }
-        // Other attributes are ignored on purpose: unlike `active`, none of
-        // them can silently fail to revoke access.
+        // Ignored on purpose: only `active` can silently fail to revoke access.
       }
       continue;
     }
@@ -164,8 +160,6 @@ export function parseGroupPatch(body: unknown): ParseOutcome<GroupPatch> {
       if (path.toLowerCase() === "members") {
         const refs = memberValues(operation.value);
         if (refs === null) {
-          // A bare `remove members` would mean "empty the group", which is a
-          // membership change we must not guess at.
           return { ok: false, detail: "A member removal carries no identifier." };
         }
         patch.remove.push(...refs);

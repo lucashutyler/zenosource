@@ -62,10 +62,8 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
     name: "Okta",
     summary:
       "Signs your team in through Okta over OIDC or SAML, and creates and deactivates ZenoSource users from your directory.",
-    // Never all three at once for one tenant: a connection carries one
-    // protocol, so its health check verifies `sso_oidc` XOR `sso_saml`, plus
-    // `scim_provisioning` always — we are the directory server, so there is
-    // nothing outbound to probe for it.
+    // Never all three for one tenant: a connection carries one protocol, so
+    // health verifies `sso_oidc` XOR `sso_saml`, plus `scim_provisioning`.
     capabilities: ["sso_oidc", "sso_saml", "scim_provisioning"],
     status: "available",
     subproject: "integrations/idp/okta",

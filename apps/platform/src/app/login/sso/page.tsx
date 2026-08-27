@@ -9,9 +9,7 @@ import { ErrorText } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Sign in with your organization" };
 
-// A plain GET form, not a server action: a server action's redirect() is a
-// client-side router navigation, and the router cannot follow the hop to
-// another origin that the next leg requires.
+// A server action's redirect() is a client-side router navigation: it cannot leave this origin.
 
 export default async function SsoLoginPage({
   searchParams,
@@ -44,8 +42,7 @@ export default async function SsoLoginPage({
           </p>
         </div>
 
-        {/* Deliberately the same sentence for every failure: saying which would
-            make this box an oracle for whether a company federates. */}
+        {/* One sentence for every failure: naming which would out who federates. */}
         <ErrorText>
           {submitted
             ? "We don't have single sign-on set up for that address. Sign in with your password instead."

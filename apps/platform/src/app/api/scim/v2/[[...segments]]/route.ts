@@ -8,18 +8,11 @@ import type { DirectoryRequest } from "@/lib/integrations/idp-contract";
 
 export const runtime = "nodejs";
 
-/**
- * One answer for every way authentication can fail, so a prober cannot tell
- * an unknown token from a revoked one from a disconnected integration.
- */
 function unauthorized(): Response {
-  // No body: rendering one needs the token that just failed, and hand-writing a
-  // protocol-shaped error document here is what vocabulary.test.ts fails on.
+  // A protocol-shaped error document hand-written here is what vocabulary.test.ts fails on.
   return new Response(null, {
     status: 401,
     headers: {
-      // A directory's provisioning console renders an HTML sign-in page as an
-      // opaque failure, so this prefix must challenge rather than redirect.
       "www-authenticate": 'Bearer realm="ZenoSource"',
     },
   });
@@ -65,8 +58,6 @@ async function handle(
     body,
   };
 
-  // The store closes over this tenant and connection and the connector is never
-  // told either, so no argument exists through which one tenant reaches another.
   const store = directoryStoreFor({
     tenantId: resolved.tenantId,
     connectionId: connection.id,
@@ -74,8 +65,6 @@ async function handle(
   });
 
   const response = await connector.handleDirectoryRequest(
-    // A directory push carries its own credential, so an unsealed connection
-    // needs no outbound secret decrypted onto this path.
     connection.secretsSealed ? sessionFor(connection) : { config: {}, secrets: {} },
     directoryRequest,
     store

@@ -157,8 +157,6 @@ export async function changeOwnPassword(
   if (!record) return failWith(formData, "Not signed in.");
 
   if (!record.passwordHash) {
-    // Setting one here would create a second way into an account the directory
-    // is meant to control.
     return failWith(
       formData,
       "You sign in through your organization's identity provider, so there's no password here to change."
@@ -214,9 +212,8 @@ export async function handOverAndDeactivate(
     return fail(formData, { successorId: "Choose who picks up their open items." });
   }
 
-  // The mechanics live in src/lib/offboarding.ts: a directory deactivation has
-  // to do the same thing with nobody to ask, and two implementations of
-  // "somebody left" is two chances to forget the handover.
+  // Shared with the directory path: two implementations of "somebody left" is
+  // two chances to forget the handover.
   const result = await deactivateInternalUser({
     userId: internalUserId,
     successorId: successor.id,

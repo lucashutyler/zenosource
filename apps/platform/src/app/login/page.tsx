@@ -3,10 +3,8 @@ import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = { title: "Sign in" };
 
-// The form is a Client Component (useActionState keeps what was typed after a
-// failed attempt), and reading searchParams there needs either `use()`, which
-// suspends, or useSearchParams, which needs a Suspense boundary — so it is
-// read here and passed down as a string.
+// searchParams is read here because doing it in the Client Component below
+// needs either `use()`, which suspends, or a Suspense boundary.
 export default async function LoginPage({
   searchParams,
 }: {
@@ -14,8 +12,6 @@ export default async function LoginPage({
 }) {
   const { sso, reason } = await searchParams;
 
-  // Password sign-in is untouched by whatever went wrong with the federated
-  // one, so this is a message above a working form, not an outage screen.
   const ssoMessage =
     sso === "failed"
       ? (reason ?? "That sign-in didn't complete. Try again, or use your password.")

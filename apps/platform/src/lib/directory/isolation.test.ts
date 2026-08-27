@@ -105,7 +105,6 @@ describe("one tenant's directory credential cannot reach another's", () => {
   });
 
   it("writes an address change to its own row even when the address exists elsewhere", async () => {
-    // Email is unique per tenant, so the same address legitimately exists in two organizations.
     const a = await organization("iso-a");
     const b = await organization("iso-b");
 
@@ -159,7 +158,6 @@ describe("one tenant's directory credential cannot reach another's", () => {
   });
 
   it("keeps working while the connection is merely unhealthy", async () => {
-    // A failing health check must not stop a customer deprovisioning somebody who has left.
     const a = await organization("iso-a");
     await db.integrationConnection.update({
       where: { id: a.connection.id },

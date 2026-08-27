@@ -10,17 +10,12 @@ import type { ResolvedTenant } from "./tenant-resolution";
 import type { SignInCallback } from "@/lib/integrations/idp-contract";
 import type { IntegrationConnection } from "@/generated/prisma/client";
 
-// Deliberately reads the IntegrationConnection row rather than the capability
-// model: DEGRADED withdraws `sso_oidc`/`sso_saml`, and gating sign-in on that
-// would lock out the owner who is the only person able to repair it.
-
 export type BeginResult =
   | { ok: true; url: string; handle: string; cookieValue: string }
   | { ok: false; reason: string };
 
 const IDP_INTEGRATION_IDS = INTEGRATIONS.filter((i) => i.type === "idp").map((i) => i.id);
 
-/** The tenant's identity-provider connection in any state, DISCONNECTED included. */
 export async function idpConnectionFor(tenantId: string): Promise<IntegrationConnection | null> {
   return db.integrationConnection.findFirst({
     where: { tenantId, integrationId: { in: IDP_INTEGRATION_IDS } },
@@ -34,8 +29,7 @@ export async function signInConnectionFor(
   const connection = await db.integrationConnection.findFirst({
     where: {
       tenantId,
-      // Deliberately not `status: "CONNECTED"` — a DEGRADED connection must
-      // still be able to sign people in.
+      // DEGRADED must not gate sign-in: it would lock out the owner who repairs it.
       status: { in: ["CONNECTED", "DEGRADED"] },
       integrationId: { in: IDP_INTEGRATION_IDS },
     },
@@ -54,15 +48,12 @@ export async function beginSignIn(params: {
   tenant: ResolvedTenant;
   connection: IntegrationConnection;
   redirectTo?: string | null;
-  /** What the person typed on the way in. Advisory; authorizes nothing. */
   loginHint?: string | null;
 }): Promise<BeginResult> {
   const { tenant, connection } = params;
   const connector = getIdpConnector(connection.integrationId);
   if (!connector) return { ok: false, reason: "That sign-in method isn't available in this build." };
 
-  // Minted first, so the connector puts it in the protocol's own round-trip
-  // slot. The platform never names that slot.
   const handle = newHandle();
 
   let started;
@@ -110,25 +101,18 @@ export async function completeSignIn(params: {
 }): Promise<CompleteResult> {
   const { tenant, callback, cookieValue } = params;
 
-  // Which parameter a protocol round-trips the handle in is the connector's
-  // business, so the connector is asked — after the tenant is settled from the
-  // URL, never from anything untrusted.
   const tenantConnection = await signInConnectionFor(tenant.id);
   const reader = tenantConnection ? getIdpConnector(tenantConnection.integrationId) : undefined;
   const handle = reader?.readHandle(callback) ?? "";
 
   const request = await consumeRequest(handle, cookieValue);
   if (!request) {
-    // One message for a missing handle, a replayed one, an expired one and a
-    // wrong browser: distinguishing them tells a prober which they achieved.
     return {
       ok: false,
       reason: "That sign-in link has expired or was already used. Start again from the sign-in page.",
     };
   }
   if (request.tenantId !== tenant.id) {
-    // Honouring a handle from another organization's sign-in would mint a
-    // session in the wrong tenant.
     return { ok: false, reason: "That sign-in didn't match this organization." };
   }
 
@@ -154,8 +138,7 @@ export async function completeSignIn(params: {
   });
 
   if (!result.ok) {
-    // REJECTED is excluded deliberately: one person's expired tab must not
-    // withdraw sign-in for their whole organization.
+    // REJECTED excluded: one person's expired tab must not withdraw sign-in for a whole tenant.
     if (result.kind !== "REJECTED") {
       await recordHealth(connection.id, {
         healthy: false,

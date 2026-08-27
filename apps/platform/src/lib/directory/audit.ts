@@ -10,7 +10,6 @@ export type DirectoryEventInput = {
   internalUserId?: string | null;
   /** An address or a group name, so a row still says who it was about. */
   subjectHint?: string | null;
-  /** For a refusal: the sentence the directory was given. */
   reason?: string | null;
   detail?: Record<string, unknown> | null;
   db?: PrismaClient;

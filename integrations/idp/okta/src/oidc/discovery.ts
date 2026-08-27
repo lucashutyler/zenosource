@@ -67,8 +67,7 @@ export async function discover(
     typeof document[key] === "string" ? (document[key] as string) : "";
 
   const declared = read("issuer");
-  // Byte-for-byte: a trailing-slash difference is a different issuer to token
-  // validation, so accepting it here passes the health check and breaks every sign-in.
+  // A trailing-slash difference is a different issuer to token validation.
   if (declared !== issuer.replace(/\/+$/, "")) {
     return {
       ok: false,
@@ -91,8 +90,6 @@ export async function discover(
     if (!secure(value)) {
       return { ok: false, kind: "MISCONFIGURED", detail: `Its ${name} is not https://.` };
     }
-    // A cross-origin endpoint sends a token request or a key fetch somewhere the
-    // admin never named.
     if (!sameOrigin(value, issuer)) {
       return {
         ok: false,

@@ -78,7 +78,6 @@ describe("users", () => {
   });
 
   describe("deactivation", () => {
-    // Every shape below is one a real directory sends.
     const shapes: { name: string; body: unknown }[] = [
       { name: "a pathless replace carrying an object", body: { Operations: [{ op: "replace", value: { active: false } }] } },
       { name: "a replace with an explicit path", body: { Operations: [{ op: "replace", path: "active", value: false }] } },

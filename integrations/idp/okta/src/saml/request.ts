@@ -34,8 +34,6 @@ export function buildAuthnRequest(params: {
     ` ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"` +
     ` AssertionConsumerServiceURL="${escapeXml(params.callbackUrl)}">` +
     `<saml:Issuer>${escapeXml(params.serviceProviderRef)}</saml:Issuer>` +
-    // No NameIDPolicy and no RequestedAuthnContext: both tell a customer's identity
-    // provider how to do its job, and either one wrong is a rejection we cannot diagnose.
     `</samlp:AuthnRequest>`
   );
 }
@@ -53,8 +51,7 @@ export function beginSignIn(
     callbackUrl: params.callbackUrl,
   });
 
-  // `deflateRawSync`, not `deflateSync`: the zlib header the latter adds is not
-  // part of the redirect binding and identity providers reject it.
+  // deflateRawSync: the redirect binding carries no zlib header.
   const encoded = deflateRawSync(Buffer.from(xml, "utf8")).toString("base64");
 
   const url = new URL(config.ssoUrl ?? "");

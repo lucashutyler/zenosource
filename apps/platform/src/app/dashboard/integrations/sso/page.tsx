@@ -18,9 +18,7 @@ import { AddDomainForm, GroupMappingForm, IssueTokenForm } from "./forms";
 
 export const metadata: Metadata = { title: "Single sign-on" };
 
-// Not behind requireFeature(): a DEGRADED connection withdraws the identity
-// capabilities, which would hide this repair screen behind the health of the
-// thing it repairs. OWNER is the gate.
+// No requireFeature(): DEGRADED withdraws the capability, hiding the screen that repairs it.
 
 function Address({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (

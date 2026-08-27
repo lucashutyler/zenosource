@@ -20,8 +20,7 @@ const set = (...parts: Buffer[]) => tlv(0x31, Buffer.concat(parts));
 
 function integer(value: Buffer | number): Buffer {
   let body = typeof value === "number" ? Buffer.from([value]) : value;
-  // DER integers are signed: a leading byte above 0x7f needs a zero pad or it
-  // reads as negative.
+  // DER integers are signed: a leading byte above 0x7f needs a zero pad.
   if (body.length > 0 && (body[0] ?? 0) & 0x80) body = Buffer.concat([Buffer.from([0]), body]);
   return tlv(0x02, body);
 }
@@ -45,7 +44,6 @@ const nul = () => tlv(0x05, Buffer.alloc(0));
 const utf8 = (value: string) => tlv(0x0c, Buffer.from(value, "utf8"));
 const bitString = (value: Buffer) => tlv(0x03, Buffer.concat([Buffer.from([0]), value]));
 
-/** UTCTime, `YYMMDDHHMMSSZ` — valid up to 2049, which every fixture here is. */
 function utcTime(date: Date): Buffer {
   const pad = (n: number) => String(n).padStart(2, "0");
   const text =
@@ -70,9 +68,7 @@ export type GeneratedCertificate = {
   privateKey: KeyObject;
   publicKey: KeyObject;
   privateKeyPem: string;
-  /** PEM, with armour — what a verifier wants. */
   certificatePem: string;
-  /** Base64 DER with no armour — what a SAML document carries. */
   certificateBody: string;
   notAfter: Date;
 };

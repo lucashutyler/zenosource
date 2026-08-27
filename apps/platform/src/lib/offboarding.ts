@@ -5,11 +5,6 @@ import type { PrismaClient } from "@/generated/prisma/client";
 
 export type HandOverResult = { moved: number };
 
-/**
- * `moveLocations` copies the departing user's location assignments to the successor.
- * False for a directory-triggered handover, where it would be a privilege grant issued by
- * an offboarding; the work goes to an OWNER, who is unrestricted by construction anyway.
- */
 export async function handOverOpenWork(params: {
   db?: PrismaClient;
   fromUserId: string;
@@ -58,7 +53,6 @@ export async function pickHandoverOwner(
       id: { not: excludeUserId },
     },
     select: { id: true, name: true },
-    // Oldest first, so the same owner is chosen every time.
     orderBy: { createdAt: "asc" },
   });
 }
@@ -67,14 +61,9 @@ export type DeactivationResult =
   | { ok: true; moved: number; successorName: string | null }
   | { ok: false; refused: string };
 
-/**
- * Refuses the last active owner: an organization with no owner cannot repair a broken
- * integration, issue a directory token, or promote anyone.
- */
 export async function deactivateInternalUser(params: {
   db?: PrismaClient;
   userId: string;
-  /** Named by an owner; otherwise the tenant's oldest active owner is chosen. */
   successorId?: string;
   source: "TEAM_PAGE" | "DIRECTORY";
   connectionId?: string | null;
@@ -127,8 +116,7 @@ export async function deactivateInternalUser(params: {
       moveLocations: params.moveLocations ?? params.source === "TEAM_PAGE",
     }));
   } else {
-    // Nobody to hand to: strip the location grants but leave the items owned, so the
-    // refusal is visible on the board rather than silently emptying it.
+    // Items stay owned by the departing user: an emptied board hides the refusal.
     await db.internalUserLocation.deleteMany({ where: { internalUserId: user.id } });
     await recordDirectoryEvent({
       db,
@@ -169,10 +157,6 @@ export async function deactivateInternalUser(params: {
   return { ok: true, moved, successorName: successor?.name ?? null };
 }
 
-/**
- * The role does not come back with them: MEMBER is where deactivation left it, and an
- * owner has to say otherwise.
- */
 export async function reactivateInternalUser(params: {
   db?: PrismaClient;
   userId: string;

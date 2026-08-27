@@ -80,7 +80,6 @@ describe("a pushed group", () => {
       db,
       tenantId: tenant.id,
       groupId: group.id,
-      // Crafted past the form, which only offers member or nothing.
       role: "OWNER" as unknown as "MEMBER",
       locationIds: [],
     });

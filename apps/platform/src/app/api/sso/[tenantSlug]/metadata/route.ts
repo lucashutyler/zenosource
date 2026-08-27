@@ -5,7 +5,6 @@ import { getIdpConnector } from "@/lib/integrations/connectors";
 import { sessionFor } from "@/lib/integrations/connections";
 import { ssoCallbackUrl, serviceProviderRef } from "@/lib/auth/urls";
 
-// Public by design: two URLs the customer already knows, and no secret.
 export const runtime = "nodejs";
 
 export async function GET(

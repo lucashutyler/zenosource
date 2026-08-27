@@ -20,7 +20,7 @@ async function paramsFrom(request: NextRequest): Promise<Record<string, string>>
         if (typeof value === "string") merged[key] = value;
       }
     } catch {
-      // An unreadable body falls through to the same generic failure below.
+      // An unreadable body fails verification below anyway.
     }
   }
   return merged;
@@ -29,8 +29,6 @@ async function paramsFrom(request: NextRequest): Promise<Record<string, string>>
 function failed(request: NextRequest, reason: string) {
   const url = new URL("/login", request.nextUrl);
   url.searchParams.set("sso", "failed");
-  // Safe to show: no broker message distinguishes a wrong handle from an
-  // expired one from the wrong browser.
   url.searchParams.set("reason", reason.slice(0, 300));
   return NextResponse.redirect(url);
 }
@@ -57,8 +55,7 @@ async function handle(request: NextRequest, tenantSlug: string) {
   const response = NextResponse.redirect(
     new URL(safeReturnTo(result.redirectTo), request.nextUrl)
   );
-  // Expired at the path it was set on: `delete(name)` defaults to "/" and
-  // silently fails to match a cookie scoped to /api/sso.
+  // `delete(name)` defaults to path "/" and silently misses a cookie scoped to /api/sso.
   response.cookies.set(SSO_COOKIE, "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

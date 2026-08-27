@@ -10,7 +10,6 @@ import type {
 
 export const CLOCK_SKEW_MS = 60_000;
 
-/** How old an assertion may be regardless of its own stated window. */
 export const MAX_ASSERTION_AGE_MS = 10 * 60_000;
 
 type Profile = {
@@ -85,19 +84,16 @@ export async function completeSignIn(
     callbackUrl: expectations.callbackUrl,
     audience: expectations.serviceProviderRef,
     idpIssuer: config.idpEntityId,
-    // The response signature follows the customer's own setting: requiring one
-    // their identity provider was never asked to add rejects every valid sign-in.
+    // Requiring a response signature the customer's IdP was never asked to add rejects every sign-in.
     wantAssertionsSigned: true,
     wantAuthnResponseSigned: config.responseSigned === true,
-    // Ours to enforce, not the library's: its in-flight cache is per-process, so on
-    // more than one instance it rejects valid responses. guardBindings checks it.
+    // The library's in-flight cache is per-process and rejects valid responses on a second instance; guardBindings checks InResponseTo.
     validateInResponseTo: "never" as never,
     acceptedClockSkewMs: CLOCK_SKEW_MS,
     maxAssertionAgeMs: MAX_ASSERTION_AGE_MS,
     signatureAlgorithm: "sha256",
     digestAlgorithm: "sha256",
     wantAssertionsEncrypted: false,
-    // Named so that a change that starts signing has to add a key deliberately.
     privateKey: undefined,
   } as ConstructorParameters<typeof SAML>[0]);
 
@@ -107,11 +103,9 @@ export async function completeSignIn(
     profile = (validated.profile ?? {}) as Profile;
   } catch (thrown) {
     if (thrown instanceof SamlStatusError) {
-      // The identity provider itself declined; nothing about this connection is broken.
       return { ok: false, kind: "REJECTED", detail: thrown.message };
     }
     const message = thrown instanceof Error ? thrown.message : String(thrown);
-    // A clock-window failure is this attempt, not the connection's trust.
     const stale = /expired|clock|NotOnOrAfter|too much/i.test(message);
     return {
       ok: false,
@@ -120,8 +114,7 @@ export async function completeSignIn(
     };
   }
 
-  // Re-asserted against the profile the library built from the assertion it
-  // verified, so a guard-passing document with a profile from elsewhere cannot pass.
+  // Re-checked against the library's verified profile: the guards read the document, not what was verified.
   if ((profile.inResponseTo ?? "") !== expectations.expectedRequestId) {
     return {
       ok: false,
@@ -149,8 +142,7 @@ export async function completeSignIn(
     };
   }
 
-  // Never the email: a directory can change someone's address, and an account
-  // matched on a mutable value is an account someone else can be handed.
+  // Matched on the directory's key, never the email: an address is mutable.
   const subject =
     claim(profile, "http://schemas.microsoft.com/identity/claims/objectidentifier", "externalId") ??
     profile.nameID ??

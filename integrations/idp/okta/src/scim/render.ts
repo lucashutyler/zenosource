@@ -52,8 +52,6 @@ export function renderList(
   return {
     schemas: [LIST_SCHEMA],
     totalResults: options.total,
-    // 1-based, and echoed back rather than recomputed: a client compares it
-    // against what it asked for.
     startIndex: options.startIndex,
     itemsPerPage: resources.length,
     Resources: resources,
@@ -74,10 +72,7 @@ export function renderError(
   return body;
 }
 
-/**
- * A directory uses whatever this advertises, so a `supported: false` here must
- * stay false until the endpoint actually exists.
- */
+// A directory believes this: don't advertise support before the endpoint exists.
 export function renderServiceProviderConfig(): Record<string, unknown> {
   return {
     schemas: [SERVICE_PROVIDER_CONFIG_SCHEMA],

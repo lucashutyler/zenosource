@@ -1,4 +1,3 @@
-/** An instant, ISO 8601 with an offset. */
 export type TimestampString = string;
 
 export type HealthFailureKind =
@@ -13,11 +12,7 @@ export type HealthReport = {
   failure: HealthFailureKind;
   detail?: string;
   verifiedCapabilities?: string[];
-  /**
-   * When the credential this connection depends on stops being valid. Does
-   * not imply DEGRADED — a certificate with twelve days left is not a broken
-   * connection.
-   */
+  /** Reported, never a reason to degrade: an expiry weeks out is not a broken connection. */
   credentialExpiresAt?: TimestampString;
 };
 
@@ -27,27 +22,15 @@ export type ConnectorSession = {
 };
 
 export type FederatedIdentity = {
-  /**
-   * The directory's own stable key for this person. Never the email — an
-   * email address is mutable in a directory, and matching an account on one
-   * is the standard account-takeover hole.
-   */
+  /** The directory's own stable key, never the email: an address is mutable. */
   subject: string;
   email: string;
   name?: string | null;
-  /**
-   * Directory group ids this identity carried, if the protocol supplied any.
-   * Advisory only: grants come from groups an OWNER has mapped, never from a
-   * claim, so an unmapped group id here grants nothing.
-   */
+  /** Advisory: grants come from an OWNER's group mapping, never from a claim. */
   groupRefs?: string[];
 };
 
-/**
- * What the platform asks the connector to check the credential against. All
- * of it is computed from APP_BASE_URL and the tenant's own slug *before*
- * anything untrusted is parsed.
- */
+/** Computed from APP_BASE_URL and the tenant's own slug, never from the callback. */
 export type SignInExpectations = {
   callbackUrl: string;
   serviceProviderRef: string;
@@ -64,7 +47,6 @@ export type SignInRedirect = {
   codeVerifier?: string | null;
 };
 
-/** Query string and form body are merged by the platform into `params`. */
 export type SignInCallback = {
   method: "GET" | "POST";
   url: string;
@@ -72,13 +54,10 @@ export type SignInCallback = {
 };
 
 export type SignInFailureKind =
-  /** Well-formed, and simply did not authenticate this person. Never degrades. */
+  /** The only kind that does not degrade the connection. */
   | "REJECTED"
-  /** Did not verify against anything we trust. Degrades the connection. */
   | "UNTRUSTED"
-  /** The tenant's setup is wrong; `detail` names what to change. Degrades. */
   | "MISCONFIGURED"
-  /** The identity provider could not be reached at all. Degrades. */
   | "UNREACHABLE";
 
 export type SignInResult =
@@ -99,10 +78,7 @@ export type DirectoryGroupRecord = {
 
 export type DirectoryRefusal = { refused: string };
 
-/**
- * Tenant-scoped by construction: no method takes a tenant id, so there is no
- * signature into which the wrong tenant can be passed.
- */
+/** Tenant-scoped by construction: no method here may take a tenant id. */
 export interface DirectoryStore {
   findUser(externalRef: string): Promise<DirectoryUser | null>;
   findUserByEmail(email: string): Promise<DirectoryUser | null>;
@@ -142,7 +118,6 @@ export interface DirectoryStore {
 
 export type DirectoryRequest = {
   method: string;
-  /** Path segments after the directory base, e.g. ["Users", "abc"]. */
   segments: string[];
   query: Record<string, string>;
   body: unknown;
@@ -171,11 +146,6 @@ export interface IdpConnector {
       callbackUrl: string;
       serviceProviderRef: string;
       handle: string;
-      /**
-       * Advisory only: it lets an identity provider skip asking who they are,
-       * and it authorizes nothing — whoever comes back is checked the same
-       * way regardless.
-       */
       loginHint?: string | null;
     }
   ): Promise<SignInRedirect>;

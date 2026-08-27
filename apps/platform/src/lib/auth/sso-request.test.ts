@@ -46,7 +46,6 @@ describe("an in-flight sign-in", () => {
   });
 
   it("cannot be used twice", async () => {
-    // A replayed callback is a replayed authorization code.
     const t = await tenant();
     const started = await start(t.id);
 

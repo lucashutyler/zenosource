@@ -298,9 +298,6 @@ export async function resolveActionItemContext(
         break;
 
       case "INTEGRATION_CONNECTION":
-        // An unlabelled row that goes nowhere is not the "open action owned by
-        // someone" docs/architecture.md means — and a broken sign-in connection
-        // is the item an owner most needs one click to reach.
         context.set(item.id, {
           href: "/dashboard/integrations",
           entityLabel: "Integration",

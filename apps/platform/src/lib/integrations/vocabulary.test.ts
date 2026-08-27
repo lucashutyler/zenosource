@@ -2,8 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
-// Scoped to protocol and API shapes, never to vendor names: "Okta" and "Epicor" appear
-// deliberately in registry entries, feature copy, and error messages a buyer's admin reads.
+// Never add a vendor name here: a customer connecting Okta should be told it is Okta.
 
 const ROOT = path.resolve(__dirname, "../../..");
 const SRC = path.join(ROOT, "src");
@@ -33,14 +32,12 @@ function sourceFiles(dir: string): string[] {
   const found: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = path.join(dir, entry);
-    // Generated Prisma output embeds the whole schema as a string, comments included.
     if (entry === "generated") continue;
     if (statSync(full).isDirectory()) {
       found.push(...sourceFiles(full));
       continue;
     }
     if (!/\.tsx?$/.test(entry)) continue;
-    // A test is allowed to name what it is testing — this file, most of all.
     if (/\.test\.tsx?$/.test(entry)) continue;
     found.push(full);
   }

@@ -4,9 +4,8 @@ import "server-only";
 //
 // An IntegrationConnection holds what is usually an ERP *service account* —
 // in Epicor's case an API key plus a Basic/OAuth2 identity that between them
-// can read and write purchase orders across a buyer's whole company — or, for
-// an identity provider, the client secret that authenticates the code
-// exchange. In a shared multi-tenant database
+// can read and write purchase orders across a buyer's whole company. In a
+// shared multi-tenant database
 // (docs/architecture.md#tenancy--users: one database, tenants isolated by
 // tenant_id) that would be the single worst row in the schema to hold in
 // plaintext, so it isn't held in plaintext.
@@ -24,11 +23,8 @@ import "server-only";
 // auth boundaries". The format is versioned precisely so that upgrade is a
 // re-seal pass and not a schema change.
 //
-// A directory bearer token is hashed rather than sealed: a token is looked
-// *up* by what somebody presents, which a fresh IV per value makes impossible.
-//
-// prisma/seed.ts imports secret-box.ts directly, because it runs outside
-// Next's bundler.
+// A directory bearer token is hashed rather than sealed: it is looked *up* by
+// the value presented, which a fresh IV makes impossible.
 
 export {
   sealSecrets,

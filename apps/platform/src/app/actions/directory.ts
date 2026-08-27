@@ -9,13 +9,10 @@ import { issueDirectoryToken, revokeDirectoryToken } from "@/lib/auth/directory-
 import { domainOf, isPublicEmailDomain } from "@/lib/auth/public-domains";
 import { setGroupMapping } from "@/lib/directory/mapping";
 
-/** `issuedToken` is returned once; no plaintext is stored, so it cannot be shown again. */
 export type DirectoryActionState =
   | (NonNullable<FormState> & { issuedToken?: string })
   | undefined;
 
-// A directory token can create and deactivate users across the whole organization,
-// and a domain claim decides whose identity provider may authenticate an address.
 async function requireOwner(formData: FormData) {
   const user = await getCurrentInternalUser();
   if (user.role !== "OWNER") {
@@ -86,8 +83,7 @@ export async function addDomain(
     select: { tenantId: true },
   });
   if (existing) {
-    // "That domain can't be added" is deliberately vague: naming the other
-    // organization would tell a stranger that a competitor is a customer.
+    // Deliberately vague: naming the other organization would out them as a customer.
     return fail(
       formData,
       existing.tenantId === user.tenantId
@@ -100,7 +96,7 @@ export async function addDomain(
     data: {
       tenantId: user.tenantId,
       domain,
-      // Verified by an owner adding it, which is exactly as much as that proves.
+      // "Verified" means an owner typed it; nothing here proves they own the domain.
       verifiedAt: new Date(),
     },
   });

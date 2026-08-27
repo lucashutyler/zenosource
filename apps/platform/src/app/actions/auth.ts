@@ -24,9 +24,8 @@ export async function login(_state: LoginState, formData: FormData): Promise<Log
 
   const { email, password } = parsed.data;
 
-  // Email is unique per tenant, not globally (`@@unique([tenantId, email])`),
-  // so the same address can legitimately exist in two organizations: taking
-  // the first match would sign people into the wrong one.
+  // Email is unique per tenant, not globally: the first match may be the
+  // wrong organization.
   const candidates = await db.internalUser.findMany({
     where: { email },
     orderBy: { createdAt: "asc" },
@@ -34,9 +33,7 @@ export async function login(_state: LoginState, formData: FormData): Promise<Log
 
   let user: (typeof candidates)[number] | null = null;
   for (const candidate of candidates) {
-    // A federated account has no password hash. Skipped, not compared:
-    // bcrypt.compare against null throws, and treating a null hash as a match
-    // would make every federated user passwordless in the literal sense.
+    // Skipped, not compared: bcrypt.compare against null throws.
     if (!candidate.passwordHash) continue;
     if (await bcrypt.compare(password, candidate.passwordHash)) {
       user = candidate;
@@ -44,9 +41,8 @@ export async function login(_state: LoginState, formData: FormData): Promise<Log
     }
   }
 
-  // One message for every failure — no password, wrong password, deactivated,
-  // no such address. Anything more specific tells a stranger which addresses
-  // exist here and which organizations use single sign-on.
+  // One message for every failure: anything more specific tells a stranger
+  // which addresses exist here.
   if (!user || user.status === "DEACTIVATED") {
     return { error: "Invalid email or password." };
   }

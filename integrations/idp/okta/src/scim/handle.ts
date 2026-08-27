@@ -20,9 +20,6 @@ import type {
   DirectoryUser,
 } from "../types";
 
-// No signature in this file accepts a tenant id: the store handed down is
-// already bound to one, and that is the whole defence against a cross-tenant write.
-
 function refused(result: unknown): result is DirectoryRefusal {
   return Boolean(result && typeof result === "object" && "refused" in (result as object));
 }
@@ -118,8 +115,7 @@ async function handleUsers(
       const existing =
         (await store.findUser(externalRef)) ?? (await store.findUserByEmail(email));
       if (existing) {
-        // Not a conflict: a retried create, or a person who already had a
-        // password account here. A 409 would stall the whole import.
+        // A retried create or an existing password account — a 409 would stall the import.
         const adopted = await store.createUser({ externalRef, email, name });
         if (refused(adopted)) return error(409, adopted.refused, "uniqueness");
         if (!active) {
@@ -152,8 +148,7 @@ async function handleUsers(
 
   if (method === "DELETE") {
     if (!user) return error(404, NOT_FOUND);
-    // Deactivate, never delete: every order, action item and status event this
-    // person owns points at their row.
+    // Deactivate, never delete: orders, action items and status events point at this row.
     const result = await store.setUserActive(id, false);
     if (refused(result)) return error(409, result.refused);
     return { status: 204, headers: {}, body: null };
@@ -179,8 +174,6 @@ async function handleUsers(
   if (method === "PATCH") {
     if (!user) return error(404, NOT_FOUND);
     const parsed = parseUserPatch(request.body);
-    // A patch shape we cannot read is a 400 and never a 200: a directory records
-    // a 200 as done and stops retrying the deactivation.
     if (!parsed.ok) return error(400, parsed.detail, "invalidValue");
 
     let current: DirectoryUser = user;
@@ -257,8 +250,6 @@ async function handleGroups(
 
   if (method === "DELETE") {
     if (!group) return error(404, NOT_FOUND);
-    // The group goes; the people do not. A grant an owner made by hand outranks
-    // a directory one and survives this.
     await store.deleteGroup(id);
     return { status: 204, headers: {}, body: null };
   }

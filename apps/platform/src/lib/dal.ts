@@ -19,8 +19,7 @@ export const getCurrentInternalUser = cache(async () => {
     select: { id: true, tenantId: true, name: true, email: true, role: true, status: true },
   });
   // Ejecting a deactivated user here is the whole session-revocation
-  // mechanism: sessions are stateless signed cookies with a seven-day life, and
-  // this runs on every request that touches data.
+  // mechanism: sessions are stateless signed cookies with a seven-day life.
   if (!user || user.status === "DEACTIVATED") {
     // The session cookie is cryptographically valid but points at a user
     // that no longer exists (deleted account, or — in dev — a re-seed that

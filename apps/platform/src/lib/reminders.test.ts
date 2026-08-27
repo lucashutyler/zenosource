@@ -72,8 +72,6 @@ describe("runReminderJob", () => {
     });
 
     expect(result.internalEmailsSent).toBe(0);
-    // Not resolved or reassigned either: handing the work over is
-    // deactivation's job (src/lib/offboarding.ts).
     const item = await db.actionItem.findFirst({ where: { subjectId: "po-departed" } });
     expect(item?.status).toBe("OPEN");
     expect(item?.internalOwnerId).toBe(owner.id);

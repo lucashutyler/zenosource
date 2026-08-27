@@ -132,9 +132,7 @@ async function main() {
   await db.capturedEmail.deleteMany();
   await db.statusEvent.deleteMany();
   await db.actionItem.deleteMany();
-  // Ordered so every foreign key target is deleted later: group members and
-  // group-location grants reference InternalUser and Location further down,
-  // and InternalUserLocation.grantedByGroupId is ON DELETE SET NULL.
+  // Ordered so every foreign key target is deleted later.
   await db.directoryEvent.deleteMany();
   await db.directoryGroupMember.deleteMany();
   await db.directoryGroupLocation.deleteMany();
@@ -1126,13 +1124,7 @@ async function main() {
     }
   }
 
-  // --- Single sign-on and directory provisioning, locally, with no Okta org --
-  //
-  // `npm run fake-idp` starts a scripted identity provider on port 3101, in
-  // its own process, so no flag anyone can forget could expose a
-  // credential-minting endpoint in production — and this connection points at
-  // it. Skipped without a sealing key rather than storing a client secret
-  // unsealed.
+  // Points at the scripted identity provider `npm run fake-idp` starts.
   await db.tenantDomain.create({
     data: { tenantId: tenant.id, domain: "acme.test", verifiedAt: NOW },
   });
@@ -1160,8 +1152,7 @@ async function main() {
       },
     });
 
-    // Generated fresh every seed: a checked-in one would be a committed
-    // credential granting tenant-wide directory write.
+    // Fresh every seed: a fixed one would be a committed directory credential.
     const directoryToken = `zs_dir_${cryptoRandomBytes(32).toString("base64url")}`;
     await db.directoryToken.create({
       data: {
