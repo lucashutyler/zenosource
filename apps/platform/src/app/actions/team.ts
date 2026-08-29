@@ -1,10 +1,10 @@
 "use server";
 
 import * as z from "zod";
-import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
+import { deactivateInternalUser } from "@/lib/offboarding";
 import { getCurrentInternalUser } from "@/lib/dal";
 import { type FormState, fail, failWith } from "@/lib/form-state";
 
@@ -95,7 +95,7 @@ export async function setTeamMemberRole(internalUserId: string, role: "OWNER" | 
   // every future rejection with no internal owner at all.
   if (target.role === "OWNER" && role === "MEMBER") {
     const owners = await db.internalUser.count({
-      where: { tenantId: user.tenantId, role: "OWNER" },
+      where: { tenantId: user.tenantId, role: "OWNER", status: "ACTIVE" },
     });
     if (owners <= 1) return;
   }
@@ -120,7 +120,7 @@ export async function resetTeamMemberPassword(
   }
 
   const target = await db.internalUser.findFirst({
-    where: { id: internalUserId, tenantId: user.tenantId },
+    where: { id: internalUserId, tenantId: user.tenantId, status: "ACTIVE" },
   });
   if (!target) return failWith(formData, "That person is no longer on your team.");
 
@@ -156,6 +156,13 @@ export async function changeOwnPassword(
   const record = await db.internalUser.findUnique({ where: { id: user.id } });
   if (!record) return failWith(formData, "Not signed in.");
 
+  if (!record.passwordHash) {
+    return failWith(
+      formData,
+      "You sign in through your organization's identity provider, so there's no password here to change."
+    );
+  }
+
   if (!(await bcrypt.compare(parsed.data.current, record.passwordHash))) {
     return fail(formData, { current: "That isn't your current password." });
   }
@@ -190,7 +197,7 @@ export async function handOverAndDeactivate(
   }
 
   const target = await db.internalUser.findFirst({
-    where: { id: internalUserId, tenantId: user.tenantId },
+    where: { id: internalUserId, tenantId: user.tenantId, status: "ACTIVE" },
   });
   if (!target) return failWith(formData, "That person is no longer on your team.");
 
@@ -199,57 +206,25 @@ export async function handOverAndDeactivate(
     successorId === internalUserId
       ? null
       : await db.internalUser.findFirst({
-          where: { id: successorId, tenantId: user.tenantId },
+          where: { id: successorId, tenantId: user.tenantId, status: "ACTIVE" },
         });
   if (!successor) {
     return fail(formData, { successorId: "Choose who picks up their open items." });
   }
 
-  if (target.role === "OWNER") {
-    const owners = await db.internalUser.count({
-      where: { tenantId: user.tenantId, role: "OWNER" },
-    });
-    if (owners <= 1) {
-      return failWith(formData, "This is your last owner — promote someone else first.");
-    }
-  }
-
-  const moved = await db.actionItem.updateMany({
-    where: { internalOwnerId: internalUserId, status: "OPEN" },
-    data: { internalOwnerId: successor.id },
+  // Shared with the directory path: two implementations of "somebody left" is
+  // two chances to forget the handover.
+  const result = await deactivateInternalUser({
+    userId: internalUserId,
+    successorId: successor.id,
+    source: "TEAM_PAGE",
+    moveLocations: true,
   });
-
-  // Location assignments go with the work, or the successor inherits items
-  // for orders they can't open.
-  const assignments = await db.internalUserLocation.findMany({
-    where: { internalUserId },
-    select: { locationId: true },
-  });
-  for (const { locationId } of assignments) {
-    await db.internalUserLocation.upsert({
-      where: { internalUserId_locationId: { internalUserId: successor.id, locationId } },
-      create: { internalUserId: successor.id, locationId },
-      update: {},
-    });
-  }
-  await db.internalUserLocation.deleteMany({ where: { internalUserId } });
-
-  // No InternalUser status column: the session layer already treats a
-  // session pointing at a missing user as unauthenticated (src/lib/dal.ts),
-  // and rotating the password hash to something unguessable is a lockout that
-  // preserves every foreign key pointing at this row — cancelled-by
-  // attribution, resolved-by attribution, status-event history.
-  await db.internalUser.update({
-    where: { id: internalUserId },
-    data: {
-      role: "MEMBER",
-      passwordHash: await bcrypt.hash(`deactivated-${randomBytes(24).toString("hex")}`, 10),
-    },
-  });
+  if (!result.ok) return failWith(formData, result.refused);
 
   revalidatePath("/dashboard/team");
   revalidatePath("/dashboard");
   return {
-    ok: `${target.name} stepped down. ${moved.count} open item${moved.count === 1 ? "" : "s"} moved to ${successor.name}.`,
+    ok: `${target.name} stepped down. ${result.moved} open item${result.moved === 1 ? "" : "s"} moved to ${successor.name}.`,
   };
 }

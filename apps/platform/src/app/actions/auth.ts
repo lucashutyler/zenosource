@@ -24,16 +24,26 @@ export async function login(_state: LoginState, formData: FormData): Promise<Log
 
   const { email, password } = parsed.data;
 
-  // Placeholder internal auth (docs/todo.md Phase 1) — email is unique per
-  // tenant, not globally, so this picks the first match. Fine for a single
-  // seeded dev tenant; revisit once there's more than one.
-  const user = await db.internalUser.findFirst({ where: { email } });
-  if (!user) {
-    return { error: "Invalid email or password." };
+  // Email is unique per tenant, not globally: the first match may be the
+  // wrong organization.
+  const candidates = await db.internalUser.findMany({
+    where: { email },
+    orderBy: { createdAt: "asc" },
+  });
+
+  let user: (typeof candidates)[number] | null = null;
+  for (const candidate of candidates) {
+    // Skipped, not compared: bcrypt.compare against null throws.
+    if (!candidate.passwordHash) continue;
+    if (await bcrypt.compare(password, candidate.passwordHash)) {
+      user = candidate;
+      break;
+    }
   }
 
-  const validPassword = await bcrypt.compare(password, user.passwordHash);
-  if (!validPassword) {
+  // One message for every failure: anything more specific tells a stranger
+  // which addresses exist here.
+  if (!user || user.status === "DEACTIVATED") {
     return { error: "Invalid email or password." };
   }
 

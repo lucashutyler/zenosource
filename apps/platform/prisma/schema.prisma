@@ -14,8 +14,17 @@ datasource db {
 // --- Tenancy & users ---
 
 model Tenant {
-  id        String   @id @default(cuid())
-  name      String
+  id   String @id @default(cuid())
+  name String
+
+  // The tenant's own path segment, and the identity a federated identity
+  // provider knows us by: `/api/sso/{slug}/callback` is the address a
+  // customer configures, and `{APP_BASE_URL}/sso/saml/{slug}` is the audience
+  // every assertion for them must name. Both matter because two customers can
+  // federate from the same identity provider — a per-tenant audience is what
+  // makes one of their sign-ins unusable at the other.
+  slug String @unique
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -37,6 +46,11 @@ model Tenant {
   locations              Location[]
   statusEvents           StatusEvent[]
   integrationConnections IntegrationConnection[]
+  domains                TenantDomain[]
+  directoryTokens        DirectoryToken[]
+  directoryGroups        DirectoryGroup[]
+  directoryEvents        DirectoryEvent[]
+  ssoAuthRequests        SsoAuthRequest[]
 }
 
 enum InternalUserRole {
@@ -44,24 +58,63 @@ enum InternalUserRole {
   MEMBER
 }
 
+// Whether someone is still on the team.
+//
+// Phase 1b decided against this column, and said why in
+// src/app/actions/team.ts: the session layer treats a session pointing at a
+// missing user as unauthenticated, and rotating the password hash to
+// something unguessable was a lockout that preserved every foreign key
+// pointing at the row. That reasoning held exactly as long as a password was
+// the only door. A federated user has no password, so the rotation locks out
+// nobody, and it silently becomes a no-op for precisely the population an
+// offboarding is about. Hence a real status, read on every request by
+// src/lib/dal.ts.
+enum InternalUserStatus {
+  ACTIVE
+  DEACTIVATED
+}
+
 model InternalUser {
-  id           String           @id @default(cuid())
-  tenantId     String
-  tenant       Tenant           @relation(fields: [tenantId], references: [id])
-  email        String
-  passwordHash String
-  name         String
-  role         InternalUserRole @default(MEMBER)
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  email    String
+
+  // Nullable since Phase 3: a user provisioned by a directory, or created on
+  // a first federated sign-in, never has one. Every read is guarded —
+  // bcrypt.compare against null throws, and a null hash must never be
+  // treated as "any password matches".
+  passwordHash String?
+
+  name          String
+  role          InternalUserRole   @default(MEMBER)
+  status        InternalUserStatus @default(ACTIVE)
+  deactivatedAt DateTime?
+
+  // Where this person came from, when it wasn't a hand-made account:
+  // `okta` plus the directory's own stable key. Matched on for every
+  // federated sign-in, which is why the key is never the email — a directory
+  // can change an address, and an account matched on a mutable value is an
+  // account somebody else can be handed.
+  sourceIntegrationId String?
+  externalRef         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   cancelledPurchaseOrders PurchaseOrder[]         @relation("POCancelledBy")
   actionItems             ActionItem[]            @relation("ActionItemInternalOwner")
   resolvedActionItems     ActionItem[]            @relation("ActionItemResolvedBy")
   locations               InternalUserLocation[]
   integrationConnections  IntegrationConnection[] @relation("IntegrationConnectedBy")
+  directoryGroups         DirectoryGroupMember[]
+  directoryEvents         DirectoryEvent[]        @relation("DirectoryEventSubject")
+  issuedDirectoryTokens   DirectoryToken[]        @relation("DirectoryTokenCreatedBy")
 
   @@unique([tenantId, email])
+  // Postgres treats NULLs as distinct in a unique index, so every
+  // password-only account coexists here with no backfill.
+  @@unique([tenantId, sourceIntegrationId, externalRef])
 }
 
 // Comparable to (simpler than) Epicor's Company -> Site structure: Tenant
@@ -93,20 +146,38 @@ model Location {
   assignedUsers      InternalUserLocation[]
   purchaseOrderLines PurchaseOrderLine[]
   rfqLines           RFQLine[]
+  directoryGroups    DirectoryGroupLocation[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
 }
 
+// Where a location assignment came from. `@@unique([internalUserId,
+// locationId])` means one row cannot carry both provenances, so the
+// precedence rule has to be stated rather than implied: a MANUAL grant always
+// wins and is never revoked by a directory push, and a DIRECTORY grant is
+// withdrawn when the group that issued it stops applying. Without the rule,
+// removing someone from a pushed group either destroys a hand-made grant
+// nobody will know to recreate, or leaves a departed user holding a site's
+// orders.
+enum LocationAssignmentSource {
+  MANUAL
+  DIRECTORY
+}
+
 model InternalUserLocation {
-  id             String       @id @default(cuid())
-  internalUserId String
-  internalUser   InternalUser @relation(fields: [internalUserId], references: [id])
-  locationId     String
-  location       Location     @relation(fields: [locationId], references: [id])
-  createdAt      DateTime     @default(now())
+  id               String                   @id @default(cuid())
+  internalUserId   String
+  internalUser     InternalUser             @relation(fields: [internalUserId], references: [id])
+  locationId       String
+  location         Location                 @relation(fields: [locationId], references: [id])
+  source           LocationAssignmentSource @default(MANUAL)
+  grantedByGroupId String?
+  grantedByGroup   DirectoryGroup?          @relation(fields: [grantedByGroupId], references: [id])
+  createdAt        DateTime                 @default(now())
 
   @@unique([internalUserId, locationId])
+  @@index([grantedByGroupId])
 }
 
 // No passwordHash here on purpose: persistent supplier accounts are deferred
@@ -796,7 +867,10 @@ model IntegrationConnection {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  syncRuns IntegrationSyncRun[]
+  syncRuns        IntegrationSyncRun[]
+  directoryTokens DirectoryToken[]
+  directoryGroups DirectoryGroup[]
+  directoryEvents DirectoryEvent[]
 
   // One connection per integration per tenant. A second Epicor connection
   // would mean two sources of truth for the same PO.
@@ -847,4 +921,230 @@ model IntegrationSyncRun {
   watermark DateTime?
 
   @@index([connectionId, resource, startedAt])
+}
+
+// --- Federation and the directory ------------------------------------------
+//
+// Phase 3. The per-tenant *settings* of an identity provider — issuer, client
+// id, certificates, protocol — deliberately do NOT live here: they go in
+// IntegrationConnection.config and .secretsSealed like every other
+// integration's, because ../../docs/architecture.md promises that adding an
+// integration is a subproject and a registry entry, not a migration. What is
+// below is only what the platform itself owns and has to index, query across
+// tenants, or write on a hot path.
+
+// Which email domains route to which tenant.
+//
+// Global uniqueness is the whole security property. Two tenants claiming
+// acme.com is not a preference to resolve later — it decides whose identity
+// provider gets to authenticate an address — so a unique index makes it
+// impossible rather than unlikely.
+//
+// `verifiedAt` is set by an OWNER on the SSO settings page, which proves that
+// an owner typed it and nothing more. That is honest while tenants exist only
+// through prisma/seed.ts; it stops being enough the moment Phase 4 ships
+// signup, and docs/todo.md says so where it can't be missed.
+model TenantDomain {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  domain     String
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([domain])
+  @@index([tenantId])
+}
+
+// The bearer a customer's directory authenticates with.
+//
+// Hashed, not sealed. src/lib/integrations/secrets.ts is reversible because an
+// ERP credential has to be replayed outbound; this one is only ever verified,
+// and a fresh-IV seal cannot be looked up by the value someone presents.
+// bcrypt is the wrong tool too — this is 32 bytes of entropy, not a password,
+// and a ~100ms hash per request across a bulk import is a timeout.
+//
+// docs/integrations.md: "that token *is* the tenant boundary: a bug that lets
+// one tenant's SCIM token touch another tenant's users is a severe
+// multi-tenancy breach." Several rows per connection on purpose, so a rotation
+// can overlap rather than requiring a cutover with a window where provisioning
+// is broken.
+model DirectoryToken {
+  id           String                @id @default(cuid())
+  tenantId     String
+  tenant       Tenant                @relation(fields: [tenantId], references: [id])
+  connectionId String
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  // What an admin called it, so revoking the right one doesn't need a guess.
+  name      String
+  tokenHash String @unique
+  // `••••••1a2b` — enough to tell two tokens apart without reproducing either.
+  tokenHint String
+
+  createdAt       DateTime      @default(now())
+  createdByUserId String?
+  createdByUser   InternalUser? @relation("DirectoryTokenCreatedBy", fields: [createdByUserId], references: [id])
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+
+  @@index([tenantId])
+  @@index([connectionId])
+}
+
+// A group the customer's directory pushed to us.
+//
+// Inert until an OWNER maps it. `mappedRole` is MEMBER or nothing — never
+// OWNER, refused in src/lib/directory/mapping.ts and not merely absent from
+// the form: OWNER is "a strictly larger permission than anything else in the
+// product" (src/app/actions/integrations.ts), and a group rename in somebody
+// else's console must not be able to grant it.
+model DirectoryGroup {
+  id           String                @id @default(cuid())
+  tenantId     String
+  tenant       Tenant                @relation(fields: [tenantId], references: [id])
+  connectionId String
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  externalRef String
+  displayName String
+  mappedRole  InternalUserRole?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members            DirectoryGroupMember[]
+  locations          DirectoryGroupLocation[]
+  grantedAssignments InternalUserLocation[]
+
+  @@unique([connectionId, externalRef])
+  @@index([tenantId])
+}
+
+model DirectoryGroupMember {
+  id             String         @id @default(cuid())
+  groupId        String
+  group          DirectoryGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  internalUserId String
+  internalUser   InternalUser   @relation(fields: [internalUserId], references: [id])
+  createdAt      DateTime       @default(now())
+
+  @@unique([groupId, internalUserId])
+  @@index([internalUserId])
+}
+
+// Which locations membership of a group grants. Without this a provisioned
+// MEMBER has no location at all, and src/lib/access.ts gives them a
+// permanently empty board — the "why is my list empty" problem Phase 1b spent
+// a wave fixing, arriving through the directory instead of by hand.
+model DirectoryGroupLocation {
+  id         String         @id @default(cuid())
+  groupId    String
+  group      DirectoryGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  locationId String
+  location   Location       @relation(fields: [locationId], references: [id])
+
+  @@unique([groupId, locationId])
+}
+
+enum DirectoryEventKind {
+  USER_CREATED
+  USER_UPDATED
+  USER_ADOPTED
+  USER_DEACTIVATED
+  USER_REACTIVATED
+  GROUP_CREATED
+  GROUP_UPDATED
+  GROUP_DELETED
+  GROUP_MEMBERSHIP_CHANGED
+  GRANTS_RECOMPUTED
+  OPERATION_REFUSED
+}
+
+// Provisioning operations, applied and refused.
+//
+// The refusals are the reason this table exists. A last-owner deactivation
+// that we correctly declined writes no status anywhere else in the product,
+// and it is exactly what Phase 5's "security review of multi-tenant auth
+// boundaries, ... SCIM token scoping in particular" goes looking for.
+//
+// Not StatusEvent: that table's subject types are the three document types and
+// its rows feed the scorecards' possession maths, so directory rows would
+// corrupt every number built from it. Not a sign-in log either — an audit
+// trail carrying addresses and IPs is the first tenant PII in this schema and
+// its retention is a decision, which is Phase 5's.
+model DirectoryEvent {
+  id           String                 @id @default(cuid())
+  tenantId     String
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id])
+  connectionId String?
+  connection   IntegrationConnection? @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  kind           DirectoryEventKind
+  internalUserId String?
+  internalUser   InternalUser?      @relation("DirectoryEventSubject", fields: [internalUserId], references: [id])
+
+  // An address or a group name, so a row still says who it was about after
+  // the thing it referred to is gone.
+  subjectHint String?
+  // Why a refusal was refused, in the sentence the directory was given.
+  reason      String?
+  // Canonical fields written by platform code — never the protocol adapter's
+  // raw body, or the boundary rule loses to the audit table.
+  detail      Json?
+
+  occurredAt DateTime @default(now())
+
+  @@index([tenantId, occurredAt])
+}
+
+enum SsoProtocol {
+  OIDC
+  SAML
+}
+
+// One in-flight sign-in.
+//
+// Single-use, via one atomic `UPDATE ... WHERE consumedAt IS NULL RETURNING` —
+// the same shape src/lib/document-number.ts uses and documents, so a replay is
+// closed by the statement rather than by a read-then-write race.
+//
+// A cookie cannot do this job alone. src/lib/session.ts sets `sameSite: "lax"`,
+// and a Lax cookie is not sent on the cross-site POST that a SAML response
+// arrives as — so a cookie-only design works for one protocol and silently
+// fails for the other. The cookie is still here, as a second factor binding
+// the response to the browser that started it; both must agree.
+model SsoAuthRequest {
+  id            String      @id @default(cuid())
+  tenantId      String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id])
+  integrationId String
+  protocol      SsoProtocol
+
+  // 32 random bytes, base64url. This is the entire round-trip value: it is
+  // what goes in the protocol's own state slot, and it carries no meaning, so
+  // there is no code path that can interpret an identity provider's echo as a
+  // URL. Where to land afterwards is `redirectTo` on this row.
+  handle    String  @unique
+  // The protocol-level request id we minted, which the response must quote.
+  requestId String
+  nonce     String?
+
+  // Plaintext, deliberately. Sealing it would make sign-in depend on
+  // INTEGRATION_SECRET_KEY, and apps/platform/CLAUDE.md promises the app runs
+  // without one; anyone who can read this row can read the connection it
+  // belongs to; and the row lives ten minutes.
+  codeVerifier String?
+
+  // sha256 of the short-lived browser cookie. Without it, anyone who obtains
+  // a handle can finish somebody else's sign-in in their own browser.
+  browserBindingHash String
+
+  redirectTo String    @default("/dashboard")
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  consumedAt DateTime?
+
+  @@index([tenantId])
+  @@index([expiresAt])
 }

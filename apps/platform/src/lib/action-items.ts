@@ -285,10 +285,9 @@ export async function resolveActionItemContext(
         });
         break;
       }
-      default:
-        // PO_SUGGESTION has no page yet (Phase 2, Epicor-gated) — no link target.
+      case "PO_SUGGESTION":
         context.set(item.id, {
-          href: null,
+          href: "/dashboard/po-suggestions",
           entityLabel: "PO suggestion",
           identifier: null,
           supplierName: null,
@@ -296,6 +295,19 @@ export async function resolveActionItemContext(
           value: null,
           needByDate: null,
         });
+        break;
+
+      case "INTEGRATION_CONNECTION":
+        context.set(item.id, {
+          href: "/dashboard/integrations",
+          entityLabel: "Integration",
+          identifier: null,
+          supplierName: null,
+          detail: null,
+          value: null,
+          needByDate: null,
+        });
+        break;
     }
   }
   return context;

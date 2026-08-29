@@ -18,6 +18,8 @@ Two populations, one platform:
 - **Internal users** — employees of the buyer organization (procurement, sourcing, ops). Authenticate via the buyer org's own IdP.
 - **External users** — suppliers. Usually no enterprise IdP relationship with the buyer; they resolve action items straight from the reminder email with no login at all — the scoped action-view link is the entire v1 external surface. Persistent supplier accounts (password login, a supplier portal) are deliberately deferred; see [docs/todo.md](docs/todo.md#decided).
 
+Internal users get **two doors, not a replacement**: a password, and — once their organization connects an identity provider — single sign-on. Federation never takes the password away, and a directory that deactivates somebody always hands their open work to somebody else. Both were forced by rules this codebase already enforces rather than chosen; [docs/todo.md](docs/todo.md) Phase 3 says which.
+
 Third-party IdP support starts with **Okta** (OIDC + SAML, SCIM provisioning). Detail: [docs/integrations.md](docs/integrations.md#okta-idp).
 
 ## Integrations gate features
@@ -27,7 +29,22 @@ ZenoSource is built to be extensible: each integration declares the *capabilitie
 ## Initial integration targets
 
 - **ERP**: Epicor (Kinetic) — [docs/integrations.md#epicor-erp](docs/integrations.md#epicor-erp)
-- **IdP**: Okta — [docs/integrations.md#okta-idp](docs/integrations.md#okta-idp)
+- **IdP**: Okta (OIDC, SAML, SCIM 2.0) — [docs/integrations.md#okta-idp](docs/integrations.md#okta-idp)
+
+## Comments
+
+Minimal. Names carry the scope: a function, a variable, a test should say what it is without help, and a
+test name should state the assertion it makes. Documents carry the program — `docs/` for the system, a
+subproject's `CLAUDE.md` and `README.md` for that subproject, this file for what's true platform-wide.
+
+A comment earns its place only when it records something no name can:
+
+- **A decision whose opposite looks correct**, so nobody "fixes" it back into a regression.
+- **A constraint from outside** — a vendor's behaviour, a specification's requirement, a framework's rule.
+
+Everything else goes. Don't restate the line below, don't narrate how the code came to be written, and
+don't leave the reasoning from a review or a bug hunt in the source. That belongs in the commit message,
+or in `docs/todo.md` if it should outlive the commit.
 
 ## Repo structure (subprojects)
 

@@ -85,6 +85,7 @@ test("every route renders clean for an owner", async ({ page }) => {
     ["location new", "/dashboard/locations/new"],
     ["team", "/dashboard/team"],
     ["integrations", "/dashboard/integrations"],
+    ["sso settings", "/dashboard/integrations/sso"],
     ["emails", "/dashboard/emails"],
     ["about", "/about"],
     ...(poId ? ([["po detail", `/dashboard/purchase-orders/${poId}`]] as [string, string][]) : []),

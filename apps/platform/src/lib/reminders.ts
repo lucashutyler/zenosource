@@ -68,6 +68,8 @@ export async function runReminderJob(params: {
 
   for (const item of dueItems) {
     if (item.ownerType === "INTERNAL_USER" && item.internalOwnerId) {
+      // Skipped, never reassigned: a chase click must not rewrite ownership.
+      if (item.internalOwner?.status === "DEACTIVATED") continue;
       const group = internalGroups.get(item.internalOwnerId) ?? [];
       group.push(item);
       internalGroups.set(item.internalOwnerId, group);
@@ -116,7 +118,7 @@ export async function runReminderJob(params: {
     const tenant = items[0].tenant;
 
     const buyer = await db.internalUser.findFirst({
-      where: { tenantId: tenant.id, role: "OWNER" },
+      where: { tenantId: tenant.id, role: "OWNER", status: "ACTIVE" },
       select: { name: true, email: true },
       orderBy: { createdAt: "asc" },
     });

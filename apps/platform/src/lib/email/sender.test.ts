@@ -63,7 +63,9 @@ describe("MailboxEmailSender", () => {
   });
 
   it("captures reminder digests, action links included", async () => {
-    const tenant = await db.tenant.create({ data: { name: "Mailbox Test Co" } });
+    const tenant = await db.tenant.create({
+      data: { name: "Mailbox Test Co", slug: `mailbox-test-${runId}` },
+    });
     const supplier = await db.supplier.create({
       data: { tenantId: tenant.id, name: "Mailbox Test Supplier" },
     });

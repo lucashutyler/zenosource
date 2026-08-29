@@ -1,0 +1,29 @@
+{
+  "name": "@zenosource/okta",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Okta identity-provider connector for ZenoSource — OIDC and SAML sign-in, and inbound SCIM 2.0 directory provisioning",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/fake-okta.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@node-saml/node-saml": "5.1.0",
+    "@xmldom/xmldom": "0.8.15",
+    "jose": "6.2.4",
+    "xml-crypto": "6.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  }
+}

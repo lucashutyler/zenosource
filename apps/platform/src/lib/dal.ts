@@ -16,9 +16,11 @@ export const getCurrentInternalUser = cache(async () => {
   const session = await verifySession();
   const user = await db.internalUser.findUnique({
     where: { id: session.internalUserId },
-    select: { id: true, tenantId: true, name: true, email: true, role: true },
+    select: { id: true, tenantId: true, name: true, email: true, role: true, status: true },
   });
-  if (!user) {
+  // Ejecting a deactivated user here is the whole session-revocation
+  // mechanism: sessions are stateless signed cookies with a seven-day life.
+  if (!user || user.status === "DEACTIVATED") {
     // The session cookie is cryptographically valid but points at a user
     // that no longer exists (deleted account, or — in dev — a re-seed that
     // wiped and recreated everyone with fresh IDs). Treat that exactly

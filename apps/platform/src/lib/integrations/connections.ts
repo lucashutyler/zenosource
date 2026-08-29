@@ -3,6 +3,7 @@ import { cache } from "react";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { createActionItem, resolveOpenActionItemsFor } from "@/lib/action-items";
+import { revokeAllForConnection } from "@/lib/auth/directory-tokens";
 import type { Capability, FeatureId } from "./capabilities";
 import { CAPABILITIES, FEATURES, featureIsUnlocked, unlockedFeatures } from "./capabilities";
 import { getIntegration, INTEGRATIONS } from "./registry";
@@ -38,9 +39,8 @@ export const getConnectionsForTenant = cache(async (tenantId: string) => {
  * Every capability this tenant currently has, intersected with what the
  * connection actually verified. A capability is granted only when the
  * integration declares it *and* the last health check confirmed the instance
- * can serve it — an Epicor API key whose Access Scope omits POSuggSvc
- * connects fine and cannot supply `po_suggestions`, and unlocking the feature
- * anyway produces a screen that is empty forever with no explanation.
+ * can serve it. Partial grants are normal, and unlocking a feature the
+ * connection cannot serve renders a screen that is empty forever.
  */
 export const capabilitiesForTenant = cache(
   async (tenantId: string): Promise<Set<Capability>> => {
@@ -94,6 +94,15 @@ export async function requireFeature(tenantId: string, feature: FeatureId): Prom
   if (!(await isFeatureEnabled(tenantId, feature))) notFound();
 }
 
+/** Reported only. Nothing is withdrawn because of it. */
+export function credentialExpiryOf(connection: IntegrationConnection): Date | null {
+  const config = connection.config as { credentialExpiresAt?: unknown } | null;
+  const value = config?.credentialExpiresAt;
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 /** Which integrations a tenant could connect to unlock a locked feature. */
 export function integrationsUnlocking(feature: FeatureId) {
   const required = FEATURES[feature].requires;
@@ -114,6 +123,7 @@ export async function connect(params: {
   const config = {
     ...params.config,
     verifiedCapabilities: health.verifiedCapabilities ?? [],
+    credentialExpiresAt: health.credentialExpiresAt ?? null,
   };
   const now = new Date();
   const data = {
@@ -152,6 +162,8 @@ export async function disconnect(tenantId: string, integrationId: string) {
       healthDetail: null,
     },
   });
+  // A live directory token could still deactivate users.
+  await revokeAllForConnection(connection.id);
   await resolveOpenActionItemsFor("INTEGRATION_CONNECTION", connection.id, {
     actionType: "INTEGRATION_RECONNECT",
   });
@@ -196,10 +208,12 @@ export async function recordHealth(connectionId: string, health: HealthReport) {
       healthDetail: health.detail ?? null,
       // Re-probing capabilities on every check matters: an admin narrowing an
       // API key's Access Scope is a silent feature withdrawal otherwise.
+      // Spread, never replaced: a wholesale write erases the connect-form config.
       config: health.verifiedCapabilities
         ? {
             ...((existing.config as Record<string, unknown>) ?? {}),
             verifiedCapabilities: health.verifiedCapabilities,
+            credentialExpiresAt: health.credentialExpiresAt ?? null,
           }
         : (existing.config ?? undefined),
     },
@@ -233,7 +247,7 @@ async function reconcileReconnectItem(connection: IntegrationConnection) {
     });
     if (open) return; // already being chased; don't reset its dwell clock
     const owner = await db.internalUser.findFirst({
-      where: { tenantId: connection.tenantId, role: "OWNER" },
+      where: { tenantId: connection.tenantId, role: "OWNER", status: "ACTIVE" },
       select: { id: true },
       orderBy: { createdAt: "asc" },
     });

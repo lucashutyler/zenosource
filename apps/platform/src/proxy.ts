@@ -7,10 +7,20 @@ import { readSession } from "@/lib/session";
 // #optimistic-checks-with-proxy-optional (this file replaces middleware.ts
 // in this Next.js version).
 
-const PUBLIC_PREFIXES = ["/login", "/a/", "/about", "/api/session/clear"]; // /a/[token] = external action-view links, no login
+// The federated sign-in legs run before there is a session.
+const PUBLIC_PREFIXES = ["/login", "/a/", "/about", "/api/session/clear", "/api/sso/"];
+
+// A directory's provisioning console reads the HTML sign-in page a redirect
+// returns as an opaque failure, and disables provisioning at its end.
+const SELF_AUTHENTICATING_PREFIXES = ["/api/scim/"];
 
 export default async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
+
+  if (SELF_AUTHENTICATING_PREFIXES.some((p) => path.startsWith(p))) {
+    return NextResponse.next();
+  }
+
   const isPublic = PUBLIC_PREFIXES.some((p) => path === p || path.startsWith(p));
 
   const session = await readSession();

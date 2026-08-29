@@ -19,7 +19,7 @@ beforeEach(() => wipeTestDb(db));
 
 describe("allocateDocumentNumber", () => {
   it("hands out one sequence shared across document classes", async () => {
-    const tenant = await db.tenant.create({ data: { name: "Numbering Co" } });
+    const tenant = await db.tenant.create({ data: { name: "Numbering Co", slug: "numbering-co" } });
 
     const po = await allocateDocumentNumber(tenant.id, "P");
     const rfq = await allocateDocumentNumber(tenant.id, "Q");
@@ -34,7 +34,7 @@ describe("allocateDocumentNumber", () => {
   // `MAX(number) + 1`: counting rows is a race in every concurrent case, and
   // the unique constraint is meant to be a backstop, not the mechanism.
   it("never hands the same number to two concurrent callers", async () => {
-    const tenant = await db.tenant.create({ data: { name: "Racing Co" } });
+    const tenant = await db.tenant.create({ data: { name: "Racing Co", slug: "racing-co" } });
 
     const numbers = await Promise.all(
       Array.from({ length: 25 }, () => allocateDocumentNumber(tenant.id, "P"))
@@ -44,8 +44,8 @@ describe("allocateDocumentNumber", () => {
   });
 
   it("keeps sequences separate per tenant", async () => {
-    const a = await db.tenant.create({ data: { name: "Tenant A" } });
-    const b = await db.tenant.create({ data: { name: "Tenant B" } });
+    const a = await db.tenant.create({ data: { name: "Tenant A", slug: "doc-tenant-a" } });
+    const b = await db.tenant.create({ data: { name: "Tenant B", slug: "doc-tenant-b" } });
 
     expect(await allocateDocumentNumber(a.id, "P")).toBe("P-10001");
     expect(await allocateDocumentNumber(b.id, "P")).toBe("P-10001");
@@ -53,7 +53,7 @@ describe("allocateDocumentNumber", () => {
   });
 
   it("burns no number when the surrounding transaction rolls back", async () => {
-    const tenant = await db.tenant.create({ data: { name: "Rollback Co" } });
+    const tenant = await db.tenant.create({ data: { name: "Rollback Co", slug: "rollback-co" } });
 
     await expect(
       db.$transaction(async (tx) => {

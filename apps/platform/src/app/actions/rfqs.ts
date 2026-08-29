@@ -720,7 +720,8 @@ export async function submitQuoteByToken(token: string, formData: FormData) {
   });
   if (!existing) {
     const owner = await db.internalUser.findFirst({
-      where: { tenantId: rfq.tenantId, role: "OWNER" },
+      where: { tenantId: rfq.tenantId, role: "OWNER", status: "ACTIVE" },
+      orderBy: { createdAt: "asc" },
     });
     if (owner) {
       await createActionItem({

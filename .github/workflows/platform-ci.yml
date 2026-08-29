@@ -5,16 +5,17 @@ on:
     branches: [main]
     paths:
       - "apps/platform/**"
-      # The platform imports the Epicor connector as a file: dependency, so a
-      # change there can break this build. Without this path the connector's
-      # own job would pass, the platform's would never run, and main would go
-      # red on the next unrelated commit.
+      # Connectors are file: dependencies of the platform, so a change in one
+      # can break this build. Without these paths its own job would pass, the
+      # platform's would never run, and main would go red on an unrelated commit.
       - "integrations/erp/epicor/**"
+      - "integrations/idp/okta/**"
       - ".github/workflows/platform-ci.yml"
   pull_request:
     paths:
       - "apps/platform/**"
       - "integrations/erp/epicor/**"
+      - "integrations/idp/okta/**"
       - ".github/workflows/platform-ci.yml"
 
 defaults:
@@ -29,9 +30,8 @@ defaults:
 env:
   TEST_DATABASE_URL: "postgresql://zenosource:zenosource@localhost:5434/zenosource_test?schema=public"
   TEST_SESSION_SECRET: "ci-test-secret-not-for-production-use"
-  # Seals IntegrationConnection.secretsSealed (src/lib/integrations/secrets.ts).
-  # 32 bytes of base64, throwaway — the connections it would protect in CI are
-  # fixtures pointing at a scripted transport, not a real Epicor instance.
+  # Seals IntegrationConnection.secretsSealed. Throwaway: the connections it
+  # protects in CI are fixtures pointing at scripted transports.
   TEST_INTEGRATION_SECRET_KEY: "Y2ktdGVzdC1rZXktbm90LWZvci1wcm9kdWN0aW9uLXVzZSE="
 
 jobs:
@@ -61,6 +61,12 @@ jobs:
           cache: npm
           cache-dependency-path: apps/platform/package-lock.json
       - run: npm ci
+      # npm resolves a `file:` dependency by symlink, so the connector's own
+      # dependencies resolve out of its own node_modules and this directory's
+      # `npm ci` does not install them.
+      - name: Install the linked connector's dependencies
+        working-directory: integrations/idp/okta
+        run: npm ci
       - run: npx prisma generate
       - run: npx tsc --noEmit
       - run: npm run lint
@@ -74,11 +80,8 @@ jobs:
           SHADOW_DATABASE_URL: "postgresql://zenosource:zenosource@localhost:5434/zenosource_shadow?schema=public"
         run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
 
-  # The Epicor connector is a standalone package with no database and no
-  # network: its whole test suite runs against a scripted transport, because
-  # there is no Kinetic instance in CI and won't be before a pilot customer
-  # (docs/todo.md Phase 5). Fast, and it gates the platform job below by
-  # failing first on anything structural.
+  # No Kinetic instance in CI and won't be before a pilot customer
+  # (docs/todo.md Phase 5), so the whole suite runs against a scripted transport.
   epicor-connector:
     runs-on: ubuntu-latest
     defaults:
@@ -91,6 +94,25 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: integrations/erp/epicor/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  # No Okta org in CI and won't be before a pilot customer (docs/todo.md
+  # Phase 5), so the whole suite runs against a scripted identity provider that
+  # signs real tokens and assertions in memory.
+  okta-connector:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/idp/okta
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: integrations/idp/okta/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -119,6 +141,12 @@ jobs:
           cache: npm
           cache-dependency-path: apps/platform/package-lock.json
       - run: npm ci
+      # npm resolves a `file:` dependency by symlink, so the connector's own
+      # dependencies resolve out of its own node_modules and this directory's
+      # `npm ci` does not install them.
+      - name: Install the linked connector's dependencies
+        working-directory: integrations/idp/okta
+        run: npm ci
       - name: Write .env.test
         run: |
           echo "DATABASE_URL=\"${TEST_DATABASE_URL}\"" > .env.test
@@ -155,6 +183,12 @@ jobs:
           cache: npm
           cache-dependency-path: apps/platform/package-lock.json
       - run: npm ci
+      # npm resolves a `file:` dependency by symlink, so the connector's own
+      # dependencies resolve out of its own node_modules and this directory's
+      # `npm ci` does not install them.
+      - name: Install the linked connector's dependencies
+        working-directory: integrations/idp/okta
+        run: npm ci
       - name: Write .env.test
         run: |
           echo "DATABASE_URL=\"${TEST_DATABASE_URL}\"" > .env.test

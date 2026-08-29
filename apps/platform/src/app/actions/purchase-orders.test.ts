@@ -22,7 +22,9 @@ beforeEach(() => wipeTestDb(db));
 // Builds an ISSUED PO with a PENDING_ACKNOWLEDGMENT line and an OPEN
 // PO_ACKNOWLEDGE item — the state a supplier's token normally targets.
 async function buildIssuedPoFixture() {
-  const tenant = await db.tenant.create({ data: { name: "Token Guard Test Co" } });
+  const tenant = await db.tenant.create({
+    data: { name: "Token Guard Test Co", slug: "token-guard-test-co" },
+  });
   const supplier = await db.supplier.create({ data: { tenantId: tenant.id, name: "Test Supplier" } });
   const contact = await db.supplierContact.create({
     data: { supplierId: supplier.id, name: "Sam", email: "sam@token-guard-test.example" },

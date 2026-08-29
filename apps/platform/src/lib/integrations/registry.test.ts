@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { CAPABILITIES, FEATURES, FEATURE_IDS, featureIsUnlocked, unlockedFeatures } from "./capabilities";
 import type { Capability } from "./capabilities";
 import { INTEGRATIONS, integrationsProviding } from "./registry";
+import { isImplemented } from "./connectors";
 
 // The executable version of the capability model, in the same spirit as
 // lifecycle.test.ts is the executable version of "no unowned states".
@@ -68,16 +69,24 @@ describe("the capability model holds together", () => {
     }
   });
 
-  it("a planned integration is declared but grants nothing until it is built", () => {
-    // Okta is declared before Phase 3 builds it, deliberately: docs/todo.md
-    // asks whether these abstractions "generalize past a single example
-    // instead of quietly being Epicor/Okta-shaped", and an IdP sitting in the
-    // same registry as an ERP is the cheapest evidence that they do. What it
-    // must NOT do is offer a tenant something that doesn't work.
-    const planned = INTEGRATIONS.filter((i) => i.status === "planned");
-    expect(planned.length).toBeGreaterThan(0);
-    for (const integration of planned) {
-      expect(integration.plannedIn, `${integration.id} is planned but names no phase`).toBeTruthy();
+  it("an integration is only offered when something implements it", () => {
+    for (const integration of INTEGRATIONS) {
+      if (integration.status === "available") {
+        expect(
+          isImplemented(integration.id),
+          `${integration.id} is offered as available but no connector is registered for it — ` +
+            `its connect form would fail on click`
+        ).toBe(true);
+      } else {
+        expect(
+          isImplemented(integration.id),
+          `${integration.id} is described as forthcoming but is already built`
+        ).toBe(false);
+        expect(
+          integration.plannedIn,
+          `${integration.id} is planned but names no phase`
+        ).toBeTruthy();
+      }
     }
   });
 
@@ -104,5 +113,20 @@ describe("feature resolution", () => {
     expect(unlocked).toContain("erp-po-sync");
     expect(unlocked).not.toContain("sso-oidc");
     expect(unlocked).not.toContain("scim-provisioning");
+  });
+
+  it("connecting an identity provider unlocks no procurement features", () => {
+    const okta = INTEGRATIONS.find((i) => i.id === "okta")!;
+    const unlocked = unlockedFeatures(okta.capabilities as Capability[]);
+    expect(unlocked).toContain("scim-provisioning");
+    expect(unlocked).not.toContain("po-suggestions");
+    expect(unlocked).not.toContain("erp-po-sync");
+  });
+
+  it("one identity-provider connection never verifies both sign-in protocols", () => {
+    expect(unlockedFeatures(["sso_oidc", "scim_provisioning"])).toEqual(
+      expect.arrayContaining(["sso-oidc", "scim-provisioning"])
+    );
+    expect(unlockedFeatures(["sso_oidc", "scim_provisioning"])).not.toContain("sso-saml");
   });
 });

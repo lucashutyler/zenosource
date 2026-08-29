@@ -22,6 +22,8 @@ Buyer-side delivery location — comparable to, but simpler than, Epicor's Compa
 
 Internal users are assigned to one or more locations (`InternalUser` ↔ `Location`, many-to-many) and, unless they hold the `OWNER` role, can only see and act on POs whose line(s) target a location they're assigned to. A PO with lines split across multiple locations is visible to any user assigned to at least one of them — line-level partial access (e.g. hiding just the lines outside a user's assignment) isn't implemented in v1.
 
+Since Phase 3 each assignment also records **where it came from** — `MANUAL` or `DIRECTORY`, plus which pushed group granted it. The join row is unique on (user, location), so one row cannot carry both provenances and the precedence has to be stated rather than left to emerge: a hand-made grant always wins and is never revoked by a directory push, and a directory grant is withdrawn when the group that issued it stops applying. Without the rule, removing somebody from a pushed group either destroys an assignment an owner made deliberately, or leaves a departed user holding a site's orders. A pushed group grants nothing at all until an owner here says what it means, and it may never grant `OWNER`.
+
 ## Supplier
 
 - `id`, `tenant_id`

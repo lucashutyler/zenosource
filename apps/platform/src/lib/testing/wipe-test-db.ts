@@ -11,6 +11,14 @@ export async function wipeTestDb(db: PrismaClient) {
   await db.capturedEmail.deleteMany();
   await db.statusEvent.deleteMany();
   await db.actionItem.deleteMany();
+  // Ordered so every foreign key target is deleted later.
+  await db.directoryEvent.deleteMany();
+  await db.directoryGroupMember.deleteMany();
+  await db.directoryGroupLocation.deleteMany();
+  await db.directoryGroup.deleteMany();
+  await db.directoryToken.deleteMany();
+  await db.ssoAuthRequest.deleteMany();
+  await db.tenantDomain.deleteMany();
   await db.integrationSyncRun.deleteMany();
   await db.integrationConnection.deleteMany();
   await db.pOSuggestion.deleteMany();

@@ -61,7 +61,7 @@ export default async function ActionViewPage({
     select: { name: true },
   });
   const buyer = await db.internalUser.findFirst({
-    where: { tenantId: item.tenantId, role: "OWNER" },
+    where: { tenantId: item.tenantId, role: "OWNER", status: "ACTIVE" },
     select: { name: true, email: true },
     orderBy: { createdAt: "asc" },
   });

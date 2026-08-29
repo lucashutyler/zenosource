@@ -22,7 +22,7 @@ export default async function TeamPage() {
   const isOwner = user.role === "OWNER";
 
   const members = await db.internalUser.findMany({
-    where: { tenantId: user.tenantId },
+    where: { tenantId: user.tenantId, status: "ACTIVE" },
     include: {
       _count: { select: { actionItems: { where: { status: "OPEN" } } } },
       locations: { include: { location: { select: { name: true } } } },

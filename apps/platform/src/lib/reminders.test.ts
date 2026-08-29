@@ -32,7 +32,9 @@ afterAll(async () => {
 beforeEach(() => wipeTestDb(db));
 
 async function tenantWithOwner(name = "Test Co") {
-  const tenant = await db.tenant.create({ data: { name } });
+  const tenant = await db.tenant.create({
+    data: { name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-") },
+  });
   const owner = await db.internalUser.create({
     data: {
       tenantId: tenant.id,
@@ -46,6 +48,35 @@ async function tenantWithOwner(name = "Test Co") {
 }
 
 describe("runReminderJob", () => {
+  it("does not chase somebody who has left", async () => {
+    const { tenant, owner } = await tenantWithOwner("Departed Co");
+    await db.actionItem.create({
+      data: {
+        tenantId: tenant.id,
+        subjectType: "PURCHASE_ORDER",
+        subjectId: "po-departed",
+        actionType: "PO_REVIEW_REJECTION",
+        ownerType: "INTERNAL_USER",
+        internalOwnerId: owner.id,
+        accessToken: `departed-${Math.random().toString(36).slice(2)}`,
+      },
+    });
+    await db.internalUser.update({ where: { id: owner.id }, data: { status: "DEACTIVATED" } });
+
+    const sender = new RecordingEmailSender();
+    const result = await runReminderJob({
+      db,
+      sender,
+      baseUrl: "http://test.local",
+      tenantId: tenant.id,
+    });
+
+    expect(result.internalEmailsSent).toBe(0);
+    const item = await db.actionItem.findFirst({ where: { subjectId: "po-departed" } });
+    expect(item?.status).toBe("OPEN");
+    expect(item?.internalOwnerId).toBe(owner.id);
+  });
+
   it("sends one digest per internal owner covering all their open items", async () => {
     const { tenant, owner } = await tenantWithOwner();
     await db.actionItem.createMany({
@@ -240,7 +271,7 @@ describe("runReminderJob", () => {
 
   it("scopes to one tenant when asked, for the Chase all button", async () => {
     const a = await tenantWithOwner("Tenant A");
-    const b = await db.tenant.create({ data: { name: "Tenant B" } });
+    const b = await db.tenant.create({ data: { name: "Tenant B", slug: "reminders-tenant-b" } });
     const bOwner = await db.internalUser.create({
       data: { tenantId: b.id, email: "b@test.co", passwordHash: "x", name: "B Owner" },
     });

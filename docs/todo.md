@@ -1,7 +1,8 @@
 # TODO
 
 Phased build plan, kept current as phases close. Phases 0 through 1b are done and `apps/platform` runs;
-**Phase 2 (Epicor) is built and awaiting a live instance to validate against.** Phases 3 through 6 are not started.
+**Phases 2 (Epicor) and 3 (Okta) are built and awaiting a live instance and a live directory to
+validate against.** Phases 4 through 6 are not started.
 
 ## Phase 0 — Foundations
 
@@ -293,12 +294,132 @@ Written down now so it isn't rediscovered as a surprise:
 
 ## Phase 3 — Okta integration (`integrations/idp/okta`)
 
-- [ ] Per-tenant IdP config storage (SAML metadata / OIDC issuer + client_id)
-- [ ] OIDC login flow
-- [ ] SAML login flow
-- [ ] SCIM 2.0 endpoints (`/Users`, `/Groups`) + Group Push handling, tenant-scoped bearer tokens
-- [ ] Tenant resolution by domain/subdomain before assertion/token validation
-- [ ] Build the broker abstraction now so a second IdP is a config addition, not a rewrite (see [docs/integrations.md](integrations.md#okta-idp))
+**Built 2026-08-22, not yet validated against a real Okta org.** Everything below is implemented and
+tested against a scripted identity provider that signs real tokens and real assertions in memory;
+there is no Okta in CI and won't be until Phase 5 finds a pilot customer. See
+[Cut, and what a first real org will move](#cut-and-what-a-first-real-org-will-move) at the end of
+this section — it is the honest half of these checkboxes and should be read with them.
+
+- [x] Per-tenant IdP config storage (SAML metadata / OIDC issuer + client_id) — *in
+  `IntegrationConnection.config` and `.secretsSealed`, like every other integration's, so adding one
+  is still a subproject and a registry entry rather than a migration.*
+- [x] OIDC login flow — *PKCE with S256, a back-channel exchange, an ID token verified against a
+  cached remote key set with our own algorithm allowlist, and `nonce`, `aud`, `iss` and `at_hash`
+  all bound to the request that started it.*
+- [x] SAML login flow — *`@node-saml/node-saml` for the signature, and `src/saml/guards.ts` for
+  everything a signature verifier cannot know: exactly one assertion, unique element identifiers,
+  each reference covering its own parent, a two-transform allowlist, no comments inside the
+  assertion, and an embedded certificate used only to select which stored one to compare against.
+  Eleven signature-wrapping mutations are generated and refused in `verify.test.ts`.*
+- [x] SCIM 2.0 endpoints (`/Users`, `/Groups`) + Group Push handling, tenant-scoped bearer tokens —
+  *the token is hashed rather than sealed (we only ever verify it, never replay it), and the
+  platform authenticates it and hands the connector a store already bound to one tenant. No method
+  on that port takes a tenant id, so the breach [integrations.md](integrations.md#okta-idp) warns
+  about has no shape to take.*
+- [x] Tenant resolution by domain/subdomain before assertion/token validation — *by verified email
+  domain when a sign-in starts, by URL path segment when a credential comes back. Neither reads the
+  credential, which is the whole point: a document must never nominate the keys used to trust it.
+  Domain, not subdomain — subdomains need wildcard DNS and TLS and a cookie-domain decision that
+  changes `session.ts`'s security properties, and hosting is Phase 6.*
+- [x] Build the broker abstraction now so a second IdP is a config addition, not a rewrite —
+  *`src/lib/integrations/idp-contract.ts` beside `contract.ts`, and `src/lib/auth/broker.ts`, which
+  never learns which protocol a tenant uses. `vocabulary.test.ts` fails the build if a protocol
+  element name, schema identifier or wire parameter appears anywhere in `apps/platform/src` — which
+  is the mechanical version of the promise, and it caught two real leaks the first time it ran.*
+
+### Three things this phase added that weren't on the list
+
+All three were forced by rules the codebase already enforces, not chosen:
+
+- **`InternalUser.status`, reversing a written decision.** `src/app/actions/team.ts` said in as many
+  words: *"No InternalUser status column: the session layer already treats a session pointing at a
+  missing user as unauthenticated, and rotating the password hash to something unguessable is a
+  lockout that preserves every foreign key."* That was correct while a password was the only door.
+  A federated user has no password, so rotating a hash locks out nobody, and the mechanism silently
+  becomes a no-op for exactly the population an offboarding is about — `dal.ts` finds the row, which
+  was never deleted, and lets them straight in. So the column exists, the DAL ejects on every
+  request, `handOverAndDeactivate` is rewritten onto the shared
+  [`src/lib/offboarding.ts`](../apps/platform/src/lib/offboarding.ts), and the old comment is
+  replaced rather than left contradicting the code beside it. This also closes, properly, the
+  *"Nothing survives the second person"* hole in [Known holes](#known-holes-in-this-plan): an
+  offboarding now works whether a person or a directory triggers it, and a directory-triggered one
+  hands the work to the tenant's oldest active owner — who is unrestricted by construction and can
+  therefore resolve anything — without copying the leaver's locations, because a privilege grant
+  issued by an offboarding is the opposite of what an offboarding is for.
+- **Six unfiltered `role: "OWNER"` lookups became an access-control bug the moment that column
+  existed.** `access.ts`, `connections.ts`, `reminders.ts`, `rfqs.ts`, `email/notify.ts` and
+  `a/[token]/page.tsx`. Three of the six are supplier-facing: they decide the reply-to on every
+  chase email and the buyer named on the no-login action view. A departed employee's address
+  becoming the contact ZenoSource hands suppliers is precisely the silent-chase failure the
+  `SupplierContact.status` check was written to prevent, arriving through the front door. All six
+  now filter on `ACTIVE`, and most of them gained the `orderBy` they were missing as well.
+- **`INTEGRATION_CONNECTION` items rendered on the board as an unclickable "PO suggestion."**
+  `action-items.ts`'s `default:` branch labelled every non-document subject that way with a null
+  href. A pre-existing Phase 2 bug, invisible because nothing had ever been `DEGRADED` — and Phase 3
+  makes it bite, because the one item an owner most needs a single click to reach is a broken
+  sign-in connection. [architecture.md](architecture.md) says an open action resolves to something
+  someone can act on; an unlabelled row that goes nowhere is not one.
+
+### Cut, and what a first real org will move
+
+Written down now so none of it is rediscovered as a surprise.
+
+- **No per-tenant "SSO required" switch, and no break-glass recovery.** SSO is an additional door,
+  never a replacement. Every safe version of enforcement needs either working outbound email — which
+  [Phase 6](#phase-6--deferred-operational-decisions) still owes, since the chase does not yet leave
+  the building — or a new pre-issued credential class nobody asked for. And `disconnect()`
+  deliberately keeps `config` while wiping secrets, so an enforcement flag stored there would survive
+  a disconnect as a one-click total-tenant lockout. Belongs with Phase 5's security review.
+- **No identifier-first login.** `/login` keeps its single email-and-password form and gains a link.
+  Home-realm discovery on the most-tested screen in the product is Phase 1b-grade UX work, for a
+  capability `/login/sso` already delivers.
+- **No DNS-TXT domain verification.** The ceremony defends a self-service domain claim, and there is
+  no self-service anything: tenants exist only through `prisma/seed.ts`, and signup is Phase 4. The
+  global unique constraint on `TenantDomain` buys the whole security property available today —
+  nobody else can claim a domain once it is claimed. What it does *not* prove is that the owner
+  controls the domain they typed. **Revisit this the moment Phase 4 ships signup**, because then
+  whoever signs up first owns the sign-in routing for any domain they type.
+- **Certificate expiry is reported, never enforced.** An identity provider publishes its next
+  certificate beside its current one during a rollover, so divergence is the *healthy* state, and
+  `DEGRADED` on cert age would manufacture a month-early outage out of the most routine event in
+  identity operations. `HealthReport.credentialExpiresAt` renders as a dated line instead. The
+  moment there is a scheduler, this is the first thing to hang off it — a SAML certificate expiry is
+  a scheduled, entirely preventable, total-tenant outage.
+- **No identity-provider-initiated SSO, and therefore no separate assertion-replay table.**
+  `InResponseTo` is required and must match a live, unconsumed request row, so that row *is* the
+  replay guard. A customer will ask for the Okta tile; the interim answer is to configure it as an
+  SP-initiated launch into `/login/sso`. When it is added, a replay table is what it needs.
+- **No single logout, and no `SessionPayload` additions.** The valuable half of SLO needs a
+  server-side session index, which stops sessions being stateless signed cookies and rewrites
+  `session.ts`, `dal.ts`, `proxy.ts` and every logout path. What an admin actually asks for is
+  delivered by SCIM deactivation plus the DAL's per-request status read. Signing a `via` or
+  `authTime` field into every user's cookie that nothing reads is speculative schema in the worst
+  possible place — and when SLO does arrive, `readSession()` must default a missing field rather
+  than rotating the cookie name, or the deploy signs out every user of every tenant at once.
+- **No sign-in audit log.** `DirectoryEvent` is kept because a refused last-owner deactivation
+  writes no status anywhere else and is exactly what Phase 5's review reads. A log of sign-ins with
+  addresses and IPs would be the first tenant PII in the schema, and its retention is a decision
+  rather than an omission — Phase 5's.
+- **No second seeded tenant.** `e2e/helpers/db.ts` has seventeen unordered `SELECT … LIMIT 1`
+  lookups; a second tenant makes every one non-deterministic, and a fixture pairing one tenant's
+  record with another's owner is foreign-key-valid, so the failures would be intermittent and would
+  read as product bugs. Cross-tenant isolation is asserted in
+  `src/lib/directory/isolation.test.ts`, which creates both tenants itself.
+- **No per-item, location-aware reassignment on a directory deactivation.** It needs an
+  `ActionItem → locationIds` resolver that does not exist, has no answer for `PO_SUGGESTION` or
+  `INTEGRATION_CONNECTION` items, and would put an unbounded query fan-out inside a single directory
+  request that Okta will time out and retry. Everything goes to the oldest active owner.
+- **No SCIM `/Bulk`, `/Me`, ETag versioning, or filters beyond equality on the two attributes Okta
+  actually sends.** Each is a surface to get wrong for nobody's benefit, and
+  `ServiceProviderConfig` says so honestly rather than advertising them.
+- **No encrypted assertions**, and no rate limiting on the sign-in or directory endpoints. Both are
+  covered in [integrations.md](integrations.md#the-honest-half).
+- **Nothing here has met a real Okta org.** Expect the same class of surprise Phase 2 expects from
+  Kinetic: claim names, whether the response element is signed, the exact shape of an `active`
+  patch, group payload shapes. Every one of them is a candidate-list entry or a config field —
+  `src/config.ts` and `src/scim/parse.ts` are written expecting to be partly wrong. The difference
+  from Epicor, stated plainly: a wrong entity-set name shows an empty screen; a wrong assertion
+  validation shows the wrong person's purchase orders.
 
 ## Phase 4 — Homepage (`apps/homepage`)
 
@@ -340,7 +461,8 @@ covers the whole email loop for development and demos, and the Phase 4 pricing p
 
 ## Open questions for you
 
-- **ERP #2 / IdP #2**: still open. Even a rough target for each would help validate that the capability-registry and IdP-broker abstractions in [docs/architecture.md](architecture.md) and [docs/integrations.md](integrations.md) generalize past a single example instead of quietly being Epicor/Okta-shaped.
+- **ERP #2 / IdP #2**: still open, and Phase 3 deliberately did not invent one. The registry test that used to assert "at least one integration is still planned" was rewritten rather than satisfied by declaring a placeholder Entra ID entry — fabricating a roadmap to keep a test green is the test lying. But the checklist item that matters most in Phase 3, *"a second IdP is a config addition, not a rewrite"*, is only provable against a real second target. If you have even a rough one, naming it changes exactly one thing: whether `src/scim/` stays inside `integrations/idp/okta` or is extracted to a shared package on day one. Phase 3 bet on the former, on the same reasoning this file used for the capability registry — "a registry with nothing to register is scaffolding rather than infrastructure" — and it is a directory *move* rather than a redesign, because nothing in the platform ever names a schema identifier.
+- **What a claimed email domain is allowed to mean, once Phase 4 ships signup.** Today an owner adds a domain on the SSO settings page and it starts routing sign-ins immediately; the global unique constraint stops anyone else claiming it afterwards, and nothing proves the owner controls it. That is honest while tenants exist only through `prisma/seed.ts`. It stops being enough the moment there is a signup form, because then whoever signs up first owns the sign-in routing for any domain they type. Paying the DNS-TXT cost now is one file (`src/lib/auth/domains.ts`, taking an injected resolver rather than reaching for `node:dns` directly, like every other outbound edge in this repo) plus an action-item type. **Recommendation: defer it to Phase 4, beside signup, where it has a threat to defend against** — but it should be a decision rather than an oversight.
 - **Data-model gaps surfaced while drafting the schema**: the exact RFQ status enum, whether an awarded RFQ auto-creates a PurchaseOrder, and the Item/part identity strategy (denormalized strings vs. a dedicated `Item` entity). Full detail: [docs/data-model.md#open-questions-this-doc-surfaces](data-model.md#open-questions-this-doc-surfaces).
 
 *Pricing, the email provider and the scheduler moved to [Phase 6](#phase-6--deferred-operational-decisions) on 2026-08-19 — scheduled, not open.*

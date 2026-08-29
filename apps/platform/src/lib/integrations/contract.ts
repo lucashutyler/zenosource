@@ -157,11 +157,15 @@ export type HealthReport = {
   detail?: string;
   /**
    * Which of the declared capabilities this instance can actually serve. An
-   * Epicor instance whose API-key Access Scope omits POSuggSvc is healthy but
-   * cannot supply `po_suggestions`, and pretending otherwise unlocks a
-   * feature that then renders empty forever.
+   * ERP whose credential is scoped to some services and not others is healthy
+   * and still cannot supply every capability the integration declares.
    */
   verifiedCapabilities?: string[];
+  /**
+   * Not a reason to report the connection unhealthy: an identity provider
+   * publishes its next certificate during a rollover, so divergence is normal.
+   */
+  credentialExpiresAt?: TimestampString;
 };
 
 // --- Write-back ------------------------------------------------------------

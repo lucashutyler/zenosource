@@ -17,14 +17,14 @@ test("an owner sees what's connected, what isn't, and what that costs them", asy
   await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Epicor Kinetic" })).toBeVisible();
 
-  // Okta is declared before Phase 3 builds it, precisely to show the registry
-  // isn't ERP-shaped — but it must not offer a connect button that fails.
   await expect(page.getByRole("heading", { name: "Okta" })).toBeVisible();
-  await expect(page.getByText("Phase 3 builds it")).toBeVisible();
+  await expect(page.getByText("Phase 3 builds it")).toHaveCount(0);
 
-  // Nothing connected, so nothing unlocked, and the page says so rather than
-  // rendering an empty list.
-  await expect(page.getByText("Nothing is unlocked yet.")).toBeVisible();
+  await expect(page.getByText("Single sign-on (OIDC)")).toBeVisible();
+  await expect(page.getByText("Directory provisioning (SCIM)")).toBeVisible();
+  // Connecting an identity provider must not reach into procurement features.
+  await expect(page.getByText("PO suggestions", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("ERP purchase-order sync")).toHaveCount(0);
 });
 
 test("the connect form asks for both credentials and marks every field", async ({ page }) => {
@@ -33,6 +33,7 @@ test("the connect form asks for both credentials and marks every field", async (
 
   // Every control labelled — the Wave 1 rule, which matters most on a form
   // filled in once from values read off two different Epicor screens.
+
   await expect(page.getByLabel("Kinetic server URL")).toBeVisible();
   await expect(page.getByLabel("Company ID")).toBeVisible();
   await expect(page.getByLabel("API key")).toBeVisible();
